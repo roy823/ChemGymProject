@@ -1,0 +1,41 @@
+# ChemGymProject single-environment requirements
+# Recommended Python version: 3.11
+#
+# IMPORTANT:
+# 1) Install PyTorch first with the correct CUDA wheel index:
+#    pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+# 2) Then install this file:
+#    pip install -r requirements.txt
+#
+# NOTE about Oracle backends:
+# - This set is verified for UMA (FAIRChemCalculator) in fairchem-core v2.
+# - OCPCalculator (EquiformerV2 legacy path) is not provided by this stack.
+
+# RL core
+gymnasium==1.2.3
+stable-baselines3[extra]==2.7.1
+sb3-contrib==2.7.1
+
+# Materials / surrogate / graph
+ase==3.27.0
+fairchem-core==2.14.0
+torch-geometric==2.7.0
+pymatgen==2025.10.7
+mp-api==0.46.0
+
+# Scientific stack
+numpy==2.3.5
+scipy==1.17.0
+pandas==3.0.1
+matplotlib==3.10.8
+
+# Visualization / logging
+plotly==6.5.2
+tensorboard==2.20.0
+tqdm==4.67.3
+
+# Utilities
+requests==2.32.5
+pyyaml==6.0.1
+typing-extensions==4.15.0
+rich==14.3.3

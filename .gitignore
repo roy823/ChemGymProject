@@ -1,0 +1,21 @@
+# 编辑器与环境历史记录
+.history/
+.vscode/
+
+# Python 编译文件与缓存
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# 训练日志与 checkpoints (忽略任何层级下的同名文件夹)
+**/checkpoints/
+**/chem_gym_tensorboard/
+
+# 敏感文件与临时脚本
+Download.py
+
+# （可选）忽略虚拟环境
+env/
+venv/
+.env/
