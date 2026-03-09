@@ -1,0 +1,49 @@
+Apache License, Version 2.0
+Copyright (c) 2024-2026 [Chengrui Xu / Tsinghua University]
+
+1. GRANT OF LICENSE
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+=======================================================================
+2. ORIGINAL ALGORITHM (SAGCM) & INTELLECTUAL PROPERTY DECLARATION
+=======================================================================
+This repository introduces and implements the SAGCM (Surface-Adsorbate Grand 
+Canonical Modeling) algorithm, a proprietary framework pioneered by the author(s).
+The core conceptual and architectural originalities protected herein include:
+
+- The SAGCM framework: An end-to-end Reinforcement Learning solver mapping Operando 
+  catalyst evolution through Grand Potential (Ω) optimization.
+- The exact hybrid integration schema of Maskable Proximal Policy Optimization 
+  (Maskable PPO) decoupled with dual Machine Learning Potentials (e.g., Hybrid Oracle).
+- The operando compositional constraint logic, encompassing PID Lagrangian 
+  penalties, debt-shaping guidance, and thermodynamic constraint masks.
+
+The SAGCM methodology, the algorithm structure, and all specific heuristic modules 
+(`GreedyCOPlacer`, `UMAPotentialShaper`) are original intellectual properties. 
+Any academic publications, code implementations, derivative configurations, or 
+commercial evaluations utilizing the SAGCM framework or identical design concepts 
+must explicitly cite this repository and acknowledge its original inventor(s).
+
+=======================================================================
+3. THIRD-PARTY DEPENDENCIES & WEIGHTS ACKNOWLEDGEMENT
+=======================================================================
+This project utilizes the Universal Materials Accelerator (UMA) foundation 
+model developed by FAIR (Meta AI) for energy evaluation operations. 
+
+- The UMA model checkpoints (e.g., `uma-s-1p1.pt`) and associated reference 
+  files (`form_elem_refs.yaml`, `iso_atom_elem_refs.yaml`) are NOT the original 
+  property of this repository. 
+- These weights are loaded via the `fairchem-core` package and are subject to 
+  the original FAIR / Open Catalyst Project license agreements (CC-BY-NC 4.0 or MIT as applicable).
+- Users of this repository must comply with the official usage restrictions of UMA 
+  when deploying the full experimental stack.
