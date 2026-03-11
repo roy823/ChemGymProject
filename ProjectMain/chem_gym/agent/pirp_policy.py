@@ -38,11 +38,12 @@ class PIRPMaskableActorCriticPolicy(MaskableActorCriticPolicy):
         self.prior_constants = build_prior_constants(prior_constants)
 
         self.base_action_dim = (self.action_space.n // self.pirp_n_elements) * self.pirp_n_elements
-        extra_actions = int(self.action_space.n - self.base_action_dim)
-        if extra_actions not in {0, 1}:
+        self.extra_action_dim = int(self.action_space.n - self.base_action_dim)
+        if self.extra_action_dim not in {0, 1}:
             raise ValueError(
                 "PIRP policy supports action spaces with optional single extra action (e.g. no-op)."
             )
+        self.noop_action_idx = int(self.base_action_dim) if self.extra_action_dim == 1 else None
         self.n_sites = self.base_action_dim // self.pirp_n_elements
 
         hidden_dim = getattr(self.features_extractor, "hidden_dim", 128)
@@ -127,9 +128,9 @@ class PIRPMaskableActorCriticPolicy(MaskableActorCriticPolicy):
         if prior_logits is not None:
             action_logits = action_logits + self.pirp_scale * prior_logits
         # Keep no-op encouragement independent from PIRP scale so it remains effective.
-        if action_logits.shape[1] > self.base_action_dim and self.noop_logit_bonus != 0.0:
-            action_logits[:, self.base_action_dim] = (
-                action_logits[:, self.base_action_dim] + float(self.noop_logit_bonus)
+        if self.noop_action_idx is not None and self.noop_logit_bonus != 0.0:
+            action_logits[:, self.noop_action_idx] = (
+                action_logits[:, self.noop_action_idx] + float(self.noop_logit_bonus)
             )
         return self.action_dist.proba_distribution(action_logits=action_logits)
 

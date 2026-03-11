@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import hashlib
@@ -29,6 +30,38 @@ from chem_gym.physics.co_placer import GreedyCOPlacer
 from chem_gym.physics.analytical_prior import build_prior_constants
 from chem_gym.physics.pid_lagrangian import PIDLagrangianConstraint
 from chem_gym.physics.uma_shaping import UMAPotentialShaper
+
+
+@dataclass(frozen=True)
+class ActionSpec:
+    """Compact helper for mutation/no-op action indexing."""
+
+    n_sites: int
+    n_elements: int
+    enable_noop: bool
+
+    @property
+    def n_mutation_actions(self) -> int:
+        return int(self.n_sites * self.n_elements)
+
+    @property
+    def noop_action_idx(self) -> Optional[int]:
+        return int(self.n_mutation_actions) if self.enable_noop else None
+
+    @property
+    def action_dim(self) -> int:
+        return int(self.n_mutation_actions + (1 if self.enable_noop else 0))
+
+    def to_action(self, site_idx: int, elem_idx: int) -> int:
+        return int(site_idx * self.n_elements + elem_idx)
+
+    def to_indices(self, action: int) -> Tuple[int, int]:
+        if int(action) < 0 or int(action) >= self.n_mutation_actions:
+            return -1, -1
+        return int(action // self.n_elements), int(action % self.n_elements)
+
+    def is_explicit_noop(self, action: int) -> bool:
+        return bool(self.enable_noop and int(action) == int(self.noop_action_idx))
 
 
 class ChemGymEnv(gym.Env):
@@ -104,9 +137,15 @@ class ChemGymEnv(gym.Env):
             adsorption_energies_ev=adsorption_energies,
         )
 
-        self.n_mutation_actions = self.n_active_atoms * self.n_elements
-        self.noop_action_idx = self.n_mutation_actions if bool(config.enable_noop_action) else None
-        self.action_space = spaces.Discrete(self.n_mutation_actions + (1 if self.noop_action_idx is not None else 0))
+        self.action_spec = ActionSpec(
+            n_sites=self.n_active_atoms,
+            n_elements=self.n_elements,
+            enable_noop=bool(config.enable_noop_action),
+        )
+        # Backward-compatible public attributes for existing scripts.
+        self.n_mutation_actions = self.action_spec.n_mutation_actions
+        self.noop_action_idx = self.action_spec.noop_action_idx
+        self.action_space = spaces.Discrete(self.action_spec.action_dim)
 
         if self.config.mode == "image":
             self.observation_space = spaces.Box(
@@ -267,7 +306,9 @@ class ChemGymEnv(gym.Env):
     def step(self, action: int):
         self.steps += 1
         debt_before = float(self.current_debt)
-        is_noop = bool(self.noop_action_idx is not None and int(action) == int(self.noop_action_idx))
+        is_noop = self.action_spec.is_explicit_noop(action)
+        site_idx = -1
+        target_elem_idx = -1
 
         if not is_noop:
             site_idx, target_elem_idx = self._action_to_indices(action)
@@ -352,7 +393,8 @@ class ChemGymEnv(gym.Env):
         """Mask only invalid actions by default; optional deviation envelope for ablation."""
         mask = np.ones(self.action_space.n, dtype=bool)
         for site_idx in range(self.n_active_atoms):
-            mask[site_idx * self.n_elements + int(self.state[site_idx])] = False
+            cur_elem = int(self.state[site_idx])
+            mask[self.action_spec.to_action(site_idx, cur_elem)] = False
 
         if self.noop_action_idx is not None:
             mask[self.noop_action_idx] = True
@@ -367,7 +409,8 @@ class ChemGymEnv(gym.Env):
                 if diff <= -self.max_deviation:
                     affected_sites = np.where(self.state == elem_idx)[0]
                     for site_idx in affected_sites:
-                        mask[site_idx * self.n_elements : (site_idx + 1) * self.n_elements] = False
+                        start = int(site_idx * self.n_elements)
+                        mask[start : start + self.n_elements] = False
 
                 if diff >= self.max_deviation:
                     mask[elem_idx : self.n_mutation_actions : self.n_elements] = False
@@ -376,7 +419,8 @@ class ChemGymEnv(gym.Env):
         if not mutation_mask.any():
             mask[: self.n_mutation_actions] = True
             for site_idx in range(self.n_active_atoms):
-                mask[site_idx * self.n_elements + int(self.state[site_idx])] = False
+                cur_elem = int(self.state[site_idx])
+                mask[self.action_spec.to_action(site_idx, cur_elem)] = False
             if self.noop_action_idx is not None:
                 mask[self.noop_action_idx] = True
 
@@ -823,9 +867,7 @@ class ChemGymEnv(gym.Env):
         return state_arr
 
     def _action_to_indices(self, action: int) -> Tuple[int, int]:
-        if int(action) < 0 or int(action) >= self.n_mutation_actions:
-            return -1, -1
-        return int(action // self.n_elements), int(action % self.n_elements)
+        return self.action_spec.to_indices(action)
 
     def _compute_constraint_stats(self, state: np.ndarray) -> Tuple[float, float]:
         pd_idx = self.element_types.index("Pd")
