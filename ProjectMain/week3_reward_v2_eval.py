@@ -11,7 +11,13 @@ from sb3_contrib import MaskablePPO
 from sb3_contrib.common.maskable.utils import get_action_masks
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
-from chem_gym.config import EnvConfig
+from chem_gym.config import (
+    COAdsorptionConfig,
+    ConstraintConfig,
+    EnvConfig,
+    RewardConfig,
+    UMAPBRSConfig,
+)
 from chem_gym.envs.chem_env import ChemGymEnv
 from main import maybe_load_oracle
 
@@ -74,6 +80,10 @@ def eval_one_seed(
     e_cu_co: float,
     e_pd_co: float,
     enable_noop_action: bool,
+    action_mode: str,
+    stop_terminates: bool,
+    min_stop_steps: int,
+    reward_profile: str,
     use_deviation_mask: bool,
     use_uma_pbrs: bool,
     deterministic: bool,
@@ -82,7 +92,11 @@ def eval_one_seed(
     profile = str(experiment_profile).lower()
     use_route_a = profile == "route_a"
     if use_route_a:
+        action_mode = "mutation"
         enable_noop_action = True
+        stop_terminates = False
+        min_stop_steps = 0
+        reward_profile = "legacy"
         use_deviation_mask = True
         use_uma_pbrs = False
 
@@ -90,19 +104,29 @@ def eval_one_seed(
         mode="graph",
         init_seed=seed,
         max_steps=max(96, eval_steps + 16),
-        mu_co=float(mu_co),
         bulk_pd_fraction=0.08,
-        delta_omega_scale=20.0,
-        e_cu_co=float(e_cu_co),
-        e_pd_co=float(e_pd_co),
+        action_mode=str(action_mode),
         enable_noop_action=bool(enable_noop_action),
+        stop_terminates=bool(stop_terminates),
+        min_stop_steps=int(min_stop_steps),
         use_deviation_mask=bool(use_deviation_mask),
-        use_uma_pbrs=bool(use_uma_pbrs),
-        constraint_update_mode="frozen" if use_route_a else "rollout",
-        constraint_weight=0.0 if use_route_a else 1.0,
-        constraint_lambda_init=0.0 if use_route_a else 1.0,
-        constraint_lambda_min=0.0,
-        constraint_lambda_max=0.0 if use_route_a else 10.0,
+        reward=RewardConfig(
+            mu_co=float(mu_co),
+            delta_omega_scale=20.0,
+            reward_profile=str(reward_profile),
+        ),
+        constraint=ConstraintConfig(
+            constraint_update_mode="frozen" if use_route_a else "rollout",
+            constraint_weight=0.0 if use_route_a else 1.0,
+            constraint_lambda_init=0.0 if use_route_a else 1.0,
+            constraint_lambda_min=0.0,
+            constraint_lambda_max=0.0 if use_route_a else 10.0,
+        ),
+        co_adsorption=COAdsorptionConfig(
+            e_cu_co=float(e_cu_co),
+            e_pd_co=float(e_pd_co),
+        ),
+        uma_pbrs=UMAPBRSConfig(use_uma_pbrs=bool(use_uma_pbrs)),
     )
     cfg.physics_prior = dict(cfg.physics_prior)
     cfg.physics_prior["e_cu_co"] = float(e_cu_co)
@@ -139,7 +163,7 @@ def eval_one_seed(
         lam = float(info.get("constraint_lambda", np.nan))
         action_type = str(info.get("action_type", ""))
 
-        if action_type == "no_op":
+        if action_type in {"no_op", "stop"}:
             noop_steps += 1
         if np.isfinite(omega):
             omega_trace.append(omega)
@@ -175,7 +199,15 @@ def main() -> None:
     parser.add_argument("--eval-steps", type=int, default=120)
     parser.add_argument("--e-cu-co", type=float, default=-0.55)
     parser.add_argument("--e-pd-co", type=float, default=-1.35)
+    parser.add_argument("--action-mode", choices=["mutation", "swap"], default="mutation")
     parser.add_argument("--disable-noop-action", action="store_true")
+    parser.add_argument("--stop-terminates", action="store_true")
+    parser.add_argument("--min-stop-steps", type=int, default=0)
+    parser.add_argument(
+        "--reward-profile",
+        choices=["legacy", "pure_delta_omega", "delta_omega_plus_pbrs"],
+        default="legacy",
+    )
     parser.add_argument("--enable-deviation-mask", action="store_true")
     parser.add_argument("--disable-uma-pbrs", action="store_true")
     parser.add_argument("--experiment-profile", choices=["default", "route_a"], default="default")
@@ -203,6 +235,10 @@ def main() -> None:
             e_cu_co=float(args.e_cu_co),
             e_pd_co=float(args.e_pd_co),
             enable_noop_action=not bool(args.disable_noop_action),
+            action_mode=str(args.action_mode),
+            stop_terminates=bool(args.stop_terminates),
+            min_stop_steps=int(args.min_stop_steps),
+            reward_profile=str(args.reward_profile),
             use_deviation_mask=bool(args.enable_deviation_mask),
             use_uma_pbrs=not bool(args.disable_uma_pbrs),
             deterministic=not bool(args.stochastic_eval),

@@ -10,7 +10,7 @@ import torch
 from sb3_contrib.common.maskable.utils import get_action_masks
 
 from chem_gym.agent.trainer import train_agent
-from chem_gym.config import EnvConfig, TrainConfig
+from chem_gym.config import COAdsorptionConfig, EnvConfig, RewardConfig, TrainConfig
 from main import maybe_load_oracle
 
 
@@ -60,11 +60,13 @@ def run_one_mu(
         mode="graph",
         init_seed=seed,
         max_steps=max(train_steps + eval_steps + 8, 64),
-        mu_co=float(mu_co),
         bulk_pd_fraction=0.08,
-        co_max_coverage=1.0,
-        delta_omega_scale=20.0,
-        reward_shift=0.1,
+        reward=RewardConfig(
+            mu_co=float(mu_co),
+            delta_omega_scale=20.0,
+            reward_shift=0.1,
+        ),
+        co_adsorption=COAdsorptionConfig(co_max_coverage=1.0),
     )
     train_cfg = TrainConfig(
         total_timesteps=int(train_steps),

@@ -10,7 +10,7 @@ import torch
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
 from chem_gym.agent.trainer import train_agent
-from chem_gym.config import EnvConfig, SurrogateConfig, TrainConfig
+from chem_gym.config import COAdsorptionConfig, EnvConfig, RewardConfig, SurrogateConfig, TrainConfig
 from chem_gym.surrogate.ensemble import SurrogateEnsemble
 from main import maybe_load_oracle
 
@@ -70,11 +70,13 @@ def run_one(seed: int, total_steps: int, use_pirp: bool = True, oracle=None) -> 
         mode="graph",
         init_seed=seed,
         max_steps=160,
-        mu_co=-1.0,
         bulk_pd_fraction=0.08,
-        co_max_coverage=1.0,
-        delta_omega_scale=20.0 if use_oracle else 2.0,
-        reward_shift=0.2,
+        reward=RewardConfig(
+            mu_co=-1.0,
+            delta_omega_scale=20.0 if use_oracle else 2.0,
+            reward_shift=0.2,
+        ),
+        co_adsorption=COAdsorptionConfig(co_max_coverage=1.0),
     )
 
     train_cfg = TrainConfig(

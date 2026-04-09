@@ -12,7 +12,7 @@ from sb3_contrib import MaskablePPO
 from sb3_contrib.common.maskable.utils import get_action_masks
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
-from chem_gym.config import EnvConfig
+from chem_gym.config import COAdsorptionConfig, EnvConfig, RewardConfig
 from chem_gym.envs.chem_env import ChemGymEnv
 from main import maybe_load_oracle
 
@@ -156,13 +156,17 @@ def main():
             env_cfg = EnvConfig(
                 mode="graph",
                 init_seed=int(seed),
-                mu_co=float(mu_co),
                 bulk_pd_fraction=0.08,
-                e_cu_co=float(args.e_cu_co),
-                e_pd_co=float(args.e_pd_co),
-                delta_omega_scale=20.0,
-                reward_shift=0.1,
                 max_steps=max(args.steps + 32, 128),
+                reward=RewardConfig(
+                    mu_co=float(mu_co),
+                    delta_omega_scale=20.0,
+                    reward_shift=0.1,
+                ),
+                co_adsorption=COAdsorptionConfig(
+                    e_cu_co=float(args.e_cu_co),
+                    e_pd_co=float(args.e_pd_co),
+                ),
             )
 
             def _make():

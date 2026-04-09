@@ -14,7 +14,7 @@ from sb3_contrib.common.maskable.utils import get_action_masks
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from chem_gym.agent.trainer import train_agent
-from chem_gym.config import EnvConfig, TrainConfig
+from chem_gym.config import COAdsorptionConfig, EnvConfig, RewardConfig, TrainConfig
 from chem_gym.envs.chem_env import ChemGymEnv
 from main import maybe_load_oracle
 
@@ -60,13 +60,17 @@ def _make_env_config(
         mode="graph",
         init_seed=seed,
         max_steps=max_steps,
-        mu_co=float(mu_co),
         bulk_pd_fraction=0.08,
-        co_max_coverage=1.0,
-        delta_omega_scale=float(delta_omega_scale),
-        reward_shift=float(reward_shift),
-        e_cu_co=float(e_cu_co),
-        e_pd_co=float(e_pd_co),
+        reward=RewardConfig(
+            mu_co=float(mu_co),
+            delta_omega_scale=float(delta_omega_scale),
+            reward_shift=float(reward_shift),
+        ),
+        co_adsorption=COAdsorptionConfig(
+            co_max_coverage=1.0,
+            e_cu_co=float(e_cu_co),
+            e_pd_co=float(e_pd_co),
+        ),
     )
     cfg.physics_prior = dict(cfg.physics_prior)
     cfg.physics_prior["e_cu_co"] = float(cfg.e_cu_co)

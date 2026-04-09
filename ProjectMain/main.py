@@ -44,9 +44,9 @@ def parse_args():
     parser.add_argument("--mode", choices=["train", "baseline", "eval"], default="train")
     parser.add_argument(
         "--experiment-profile",
-        choices=["default", "route_a", "swap_stop"],
+        choices=["default", "route_a", "mutation_delta_stop", "swap_stop"],
         default="default",
-        help="Apply a curated parameter bundle. route_a = hard mask + debt shaping + no UMA PBRS; swap_stop = swap-only + stop + pure DeltaOmega.",
+        help="Apply a curated parameter bundle. route_a = hard mask + debt shaping + no UMA PBRS; mutation_delta_stop = mutation + stop + pure DeltaOmega; swap_stop = swap-only + stop + pure DeltaOmega.",
     )
     parser.add_argument("--obs-mode", choices=["image", "graph"], default="graph")
     parser.add_argument("--total-steps", type=int, default=5000)
@@ -80,7 +80,7 @@ def parse_args():
     parser.add_argument(
         "--reward-profile",
         choices=["legacy", "pure_delta_omega", "delta_omega_plus_pbrs"],
-        default="delta_omega_plus_pbrs",
+        default="pure_delta_omega",
     )
     parser.add_argument("--constraint-threshold-frac", type=float, default=0.12)
     parser.add_argument("--constraint-weight", type=float, default=1.0)
@@ -182,6 +182,23 @@ def parse_args():
 def apply_experiment_profile(args) -> None:
     profile = str(getattr(args, "experiment_profile", "default")).lower()
     if profile != "route_a":
+        if profile == "mutation_delta_stop":
+            args.action_mode = "mutation"
+            args.disable_noop_action = False
+            args.stop_terminates = True
+            args.min_stop_steps = max(int(getattr(args, "min_stop_steps", 0)), 8)
+            args.reward_profile = "pure_delta_omega"
+            args.disable_uma_pbrs = True
+            args.constraint_update_mode = "frozen"
+            args.constraint_weight = 0.0
+            args.constraint_lambda_init = 0.0
+            args.constraint_lambda_min = 0.0
+            args.constraint_lambda_max = 0.0
+            args.enable_deviation_mask = False
+            if float(args.noop_logit_bonus) <= 0.0:
+                args.noop_logit_bonus = 0.25
+            return
+
         if profile != "swap_stop":
             return
 

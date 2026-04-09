@@ -5,7 +5,7 @@ import torch
 from sb3_contrib.common.maskable.utils import get_action_masks
 
 from chem_gym.agent.trainer import train_agent
-from chem_gym.config import EnvConfig, SurrogateConfig, TrainConfig
+from chem_gym.config import COAdsorptionConfig, EnvConfig, RewardConfig, SurrogateConfig, TrainConfig
 from chem_gym.surrogate.ensemble import SurrogateEnsemble
 
 
@@ -13,11 +13,13 @@ def run_case(name: str, use_pirp: bool, seed: int):
     env_cfg = EnvConfig(
         mode="graph",
         init_seed=seed,
-        mu_co=-1.0,
         bulk_pd_fraction=0.08,
-        co_max_coverage=1.0,
-        delta_omega_scale=2.0,
-        reward_shift=0.15,
+        reward=RewardConfig(
+            mu_co=-1.0,
+            delta_omega_scale=2.0,
+            reward_shift=0.15,
+        ),
+        co_adsorption=COAdsorptionConfig(co_max_coverage=1.0),
     )
     train_cfg = TrainConfig(
         total_timesteps=1536,

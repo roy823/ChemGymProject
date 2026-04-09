@@ -73,7 +73,9 @@ class RewardConfig:
     linear_reward_clip: float = 3.0
     thermo_consistent_backend: bool = True
     step_penalty: float = 0.0
-    reward_profile: str = "delta_omega_plus_pbrs"
+    # Mainline default after week-4 ablation: keep reward aligned with the
+    # thermodynamic objective and enable shaping only by explicit experiment.
+    reward_profile: str = "pure_delta_omega"
 
 
 @dataclass
