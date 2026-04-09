@@ -4,7 +4,7 @@ from typing import Dict, Optional
 
 import torch
 
-from chem_gym.config import EnvConfig
+from chem_gym.config import EnvConfig, GraphFeatureLayout
 
 _CFG_DEFAULTS = EnvConfig()
 
@@ -36,9 +36,8 @@ def compute_potential_adsorption_drive(
     """
     Compute analytical potential adsorption drive for Pd preference.
 
-    Expected feature layout per node:
-    one_hot(n_elements), rel_pos(3), layer(1), coord(1), avg_bond(1),
-    debt(n_elements), is_surface(1), co_load(1)
+    Uses GraphFeatureLayout to locate feature indices rather than
+    hardcoded magic numbers.
 
     Returns:
         g_pd: (B, N_active)
@@ -51,19 +50,16 @@ def compute_potential_adsorption_drive(
         return active_node_features.new_zeros((bsz, 0))
 
     cfg = build_prior_constants(prior_constants)
+    layout = GraphFeatureLayout(n_elements=n_elements)
 
-    avg_bond_idx = n_elements + 5
-    is_surface_idx = 2 * n_elements + 6
-    co_load_idx = 2 * n_elements + 7
-
-    if feat_dim <= max(avg_bond_idx, is_surface_idx):
+    if feat_dim <= max(layout.avg_bond_idx, layout.is_surface_idx):
         return active_node_features.new_zeros((bsz, n_nodes))
 
-    avg_bond = active_node_features[..., avg_bond_idx]
-    is_surface = active_node_features[..., is_surface_idx].clamp(min=0.0, max=1.0)
+    avg_bond = active_node_features[..., layout.avg_bond_idx]
+    is_surface = active_node_features[..., layout.is_surface_idx].clamp(min=0.0, max=1.0)
 
-    if feat_dim > co_load_idx:
-        co_load = active_node_features[..., co_load_idx].clamp(min=0.0)
+    if feat_dim > layout.co_load_idx:
+        co_load = active_node_features[..., layout.co_load_idx].clamp(min=0.0)
     else:
         co_load = active_node_features.new_zeros((bsz, n_nodes))
 

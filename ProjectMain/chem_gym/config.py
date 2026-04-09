@@ -5,6 +5,61 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 
+@dataclass(frozen=True)
+class GraphFeatureLayout:
+    """Index map for the per-node feature vector built in ChemGymEnv.
+
+    Feature layout (concatenated in this order):
+        one_hot      : n_elements       (element identity)
+        rel_pos      : 3                (relative position to slab center)
+        layer_norm   : 1                (normalized layer index)
+        coord_num    : 1                (coordination number / 12)
+        avg_bond     : 1                (mean neighbor distance)
+        debt_vec     : n_elements       (target - current element counts)
+        is_surface   : 1                (binary surface flag)
+        co_load      : 1                (CO coverage fraction)
+
+    This is the single source of truth shared by chem_env and analytical_prior.
+    """
+    n_elements: int = 2
+
+    @property
+    def one_hot_start(self) -> int:
+        return 0
+
+    @property
+    def rel_pos_start(self) -> int:
+        return self.n_elements
+
+    @property
+    def layer_norm_idx(self) -> int:
+        return self.n_elements + 3
+
+    @property
+    def coord_num_idx(self) -> int:
+        return self.n_elements + 4
+
+    @property
+    def avg_bond_idx(self) -> int:
+        return self.n_elements + 5
+
+    @property
+    def debt_vec_start(self) -> int:
+        return self.n_elements + 6
+
+    @property
+    def is_surface_idx(self) -> int:
+        return 2 * self.n_elements + 6
+
+    @property
+    def co_load_idx(self) -> int:
+        return 2 * self.n_elements + 7
+
+    @property
+    def total_dim(self) -> int:
+        return 2 * self.n_elements + 8
+
+
 @dataclass
 class EnvConfig:
     mode: str = "graph"  # "image" or "graph"

@@ -25,7 +25,7 @@ except ImportError:  # pragma: no cover
     FixAtoms = None
     plot_atoms = None
 
-from chem_gym.config import EnvConfig
+from chem_gym.config import EnvConfig, GraphFeatureLayout
 from chem_gym.physics.co_placer import GreedyCOPlacer
 from chem_gym.physics.analytical_prior import build_prior_constants
 from chem_gym.physics.pid_lagrangian import PIDLagrangianConstraint
@@ -218,9 +218,8 @@ class ChemGymEnv(gym.Env):
                 dtype=np.float32,
             )
         elif self.config.mode == "graph":
-            # one-hot(n_elements) + rel_pos(3) + layer + coord + avg_bond + debt(2)
-            # + is_surface + co_load
-            self.node_feat_dim = self.n_elements + 3 + 1 + 1 + 1 + self.n_elements + 1 + 1
+            self.feature_layout = GraphFeatureLayout(n_elements=self.n_elements)
+            self.node_feat_dim = self.feature_layout.total_dim
             self.observation_space = spaces.Dict(
                 {
                     "node_features": spaces.Box(
