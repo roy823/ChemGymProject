@@ -280,6 +280,7 @@ class ChemGymEnv(gym.Env):
         )
 
         self._build_base_slab_once()
+        self._precompute_graph_topology()
 
     # ---------------------- Public RL API ----------------------
     def reset(self, *, seed: Optional[int] = None, options: Optional[Dict] = None):
@@ -662,6 +663,56 @@ class ChemGymEnv(gym.Env):
 
         self.base_slab = slab
 
+    def _precompute_graph_topology(self) -> None:
+        """Pre-compute position-dependent graph features that stay constant
+        throughout an episode (lattice positions never change, only element
+        types do)."""
+        if self.base_slab is None or self.config.mode != "graph":
+            self._cached_adjacency = None
+            self._cached_coord_num = None
+            self._cached_avg_bond = None
+            self._cached_rel_pos = None
+            self._cached_layer_norm = None
+            self._cached_is_surface = None
+            self._cached_node_mask = None
+            return
+
+        positions = self.base_slab.get_positions().astype(np.float32)
+        dist_matrix = self.base_slab.get_all_distances(mic=True).astype(np.float32)
+        cutoff = float(self.config.graph_cutoff)
+        sigma = max(float(self.config.graph_sigma), 1e-6)
+
+        adjacency = np.zeros_like(dist_matrix, dtype=np.float32)
+        edge_mask = (dist_matrix > 0.0) & (dist_matrix <= cutoff)
+        adjacency[edge_mask] = np.exp(-np.square(dist_matrix[edge_mask] / sigma))
+        np.fill_diagonal(adjacency, 1.0)
+        self._cached_adjacency = adjacency
+
+        self._cached_coord_num = np.sum(edge_mask, axis=1, dtype=np.float32)
+
+        avg_bond = np.zeros(self.n_total_atoms, dtype=np.float32)
+        for i in range(self.n_total_atoms):
+            neigh = dist_matrix[i][edge_mask[i]]
+            avg_bond[i] = float(np.mean(neigh)) if len(neigh) > 0 else 0.0
+        self._cached_avg_bond = avg_bond
+
+        center = positions.mean(axis=0, keepdims=True)
+        self._cached_rel_pos = (positions - center).astype(np.float32)
+
+        self._cached_layer_norm = np.array(
+            [float(i // self.n_sites_per_layer) / max(1.0, float(self.config.n_layers - 1))
+             for i in range(self.n_total_atoms)],
+            dtype=np.float32,
+        )
+
+        z_all = positions[:, 2]
+        z_active_max = float(np.max(z_all[self.active_start_idx:]))
+        self._cached_is_surface = (
+            z_all >= (z_active_max - float(self.config.co_surface_z_tol))
+        ).astype(np.float32)
+
+        self._cached_node_mask = np.ones(self.n_total_atoms, dtype=np.float32)
+
     def _build_atoms_from_state(self) -> Optional["Atoms"]:
         if self.base_slab is None or self.state is None:
             return None
@@ -895,48 +946,22 @@ class ChemGymEnv(gym.Env):
             flat_one_hot = np.eye(self.n_elements, dtype=np.float32)[top_layer_state]
             return flat_one_hot.reshape(self.config.slab_size[0], self.config.slab_size[1], self.n_elements)
 
-        if self.atoms is None:
+        if self.atoms is None or self._cached_adjacency is None:
             return {
                 "node_features": np.zeros((self.n_total_atoms, self.node_feat_dim), dtype=np.float32),
                 "adjacency": np.zeros((self.n_total_atoms, self.n_total_atoms), dtype=np.float32),
                 "node_mask": np.zeros((self.n_total_atoms,), dtype=np.float32),
             }
 
-        positions = self.atoms.get_positions().astype(np.float32)
         symbols = self.atoms.get_chemical_symbols()
-
-        dist_matrix = self.atoms.get_all_distances(mic=True).astype(np.float32)
-        cutoff = float(self.config.graph_cutoff)
-        sigma = max(float(self.config.graph_sigma), 1e-6)
-
-        adjacency = np.zeros_like(dist_matrix, dtype=np.float32)
-        edge_mask = (dist_matrix > 0.0) & (dist_matrix <= cutoff)
-        adjacency[edge_mask] = np.exp(-np.square(dist_matrix[edge_mask] / sigma))
-        np.fill_diagonal(adjacency, 1.0)
-
-        coord_num = np.sum(edge_mask, axis=1, dtype=np.float32)
-
-        avg_bond = np.zeros(self.n_total_atoms, dtype=np.float32)
-        for i in range(self.n_total_atoms):
-            neigh = dist_matrix[i][edge_mask[i]]
-            avg_bond[i] = float(np.mean(neigh)) if len(neigh) > 0 else 0.0
 
         current_counts = np.bincount(self.state, minlength=self.n_elements)
         debt_vec = (self.target_counts - current_counts).astype(np.float32)
 
-        z_all = positions[:, 2]
-        z_active_max = float(np.max(z_all[self.active_start_idx :]))
-        is_surface = (z_all >= (z_active_max - float(self.config.co_surface_z_tol))).astype(np.float32)
-
-        co_load = 0.0
         max_surface = max(1, len(self._get_surface_indices(self.atoms)))
         co_load = float(self.current_n_co) / float(max_surface)
 
-        center = positions.mean(axis=0, keepdims=True)
-        rel_pos = positions - center
-
         node_features = np.zeros((self.n_total_atoms, self.node_feat_dim), dtype=np.float32)
-        node_mask = np.ones((self.n_total_atoms,), dtype=np.float32)
 
         for i in range(self.n_total_atoms):
             one_hot = np.zeros((self.n_elements,), dtype=np.float32)
@@ -944,26 +969,23 @@ class ChemGymEnv(gym.Env):
             if symbol in self.element_types:
                 one_hot[self.element_types.index(symbol)] = 1.0
 
-            layer_idx = i // self.n_sites_per_layer
-            layer_norm = float(layer_idx) / max(1.0, float(self.config.n_layers - 1))
-
             node_features[i] = np.concatenate(
                 [
                     one_hot,
-                    rel_pos[i],
-                    np.array([layer_norm], dtype=np.float32),
-                    np.array([coord_num[i] / 12.0], dtype=np.float32),
-                    np.array([avg_bond[i]], dtype=np.float32),
+                    self._cached_rel_pos[i],
+                    np.array([self._cached_layer_norm[i]], dtype=np.float32),
+                    np.array([self._cached_coord_num[i] / 12.0], dtype=np.float32),
+                    np.array([self._cached_avg_bond[i]], dtype=np.float32),
                     debt_vec,
-                    np.array([is_surface[i]], dtype=np.float32),
+                    np.array([self._cached_is_surface[i]], dtype=np.float32),
                     np.array([co_load], dtype=np.float32),
                 ]
             )
 
         return {
             "node_features": node_features,
-            "adjacency": adjacency,
-            "node_mask": node_mask,
+            "adjacency": self._cached_adjacency,
+            "node_mask": self._cached_node_mask,
         }
 
     # ---------------------- Utility ----------------------
