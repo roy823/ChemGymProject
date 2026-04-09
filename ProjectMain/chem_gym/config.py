@@ -46,8 +46,14 @@ class EnvConfig:
     thermo_consistent_backend: bool = True
 
     # Action-space and masking behavior
+    action_mode: str = "mutation"  # "mutation" or "swap"
     enable_noop_action: bool = True
+    stop_terminates: bool = False
+    min_stop_steps: int = 0
     use_deviation_mask: bool = False
+
+    # Reward assembly mode
+    reward_profile: str = "delta_omega_plus_pbrs"  # "legacy", "pure_delta_omega", "delta_omega_plus_pbrs"
 
     # PID-Lagrangian soft composition constraint
     constraint_threshold_frac: float = 0.12

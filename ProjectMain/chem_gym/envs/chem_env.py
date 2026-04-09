@@ -34,23 +34,38 @@ from chem_gym.physics.uma_shaping import UMAPotentialShaper
 
 @dataclass(frozen=True)
 class ActionSpec:
-    """Compact helper for mutation/no-op action indexing."""
+    """Compact helper for mutation/swap/stop action indexing."""
 
     n_sites: int
     n_elements: int
-    enable_noop: bool
+    action_mode: str
+    enable_stop: bool
 
     @property
     def n_mutation_actions(self) -> int:
         return int(self.n_sites * self.n_elements)
 
     @property
+    def n_swap_actions(self) -> int:
+        return int(self.n_sites * max(0, self.n_sites - 1) // 2)
+
+    @property
+    def base_action_dim(self) -> int:
+        if str(self.action_mode).lower() == "swap":
+            return int(self.n_swap_actions)
+        return int(self.n_mutation_actions)
+
+    @property
+    def stop_action_idx(self) -> Optional[int]:
+        return int(self.base_action_dim) if self.enable_stop else None
+
+    @property
     def noop_action_idx(self) -> Optional[int]:
-        return int(self.n_mutation_actions) if self.enable_noop else None
+        return self.stop_action_idx
 
     @property
     def action_dim(self) -> int:
-        return int(self.n_mutation_actions + (1 if self.enable_noop else 0))
+        return int(self.base_action_dim + (1 if self.enable_stop else 0))
 
     def to_action(self, site_idx: int, elem_idx: int) -> int:
         return int(site_idx * self.n_elements + elem_idx)
@@ -60,8 +75,36 @@ class ActionSpec:
             return -1, -1
         return int(action // self.n_elements), int(action % self.n_elements)
 
+    def to_swap_action(self, first_idx: int, second_idx: int) -> int:
+        i = int(first_idx)
+        j = int(second_idx)
+        if i == j:
+            return -1
+        if i > j:
+            i, j = j, i
+        if i < 0 or j >= self.n_sites:
+            return -1
+        prefix = i * (self.n_sites - 1) - (i * (i - 1)) // 2
+        return int(prefix + (j - i - 1))
+
+    def to_swap_indices(self, action: int) -> Tuple[int, int]:
+        a = int(action)
+        if a < 0 or a >= self.n_swap_actions:
+            return -1, -1
+
+        remaining = a
+        for first_idx in range(self.n_sites - 1):
+            row_count = self.n_sites - first_idx - 1
+            if remaining < row_count:
+                return int(first_idx), int(first_idx + 1 + remaining)
+            remaining -= row_count
+        return -1, -1
+
+    def is_explicit_stop(self, action: int) -> bool:
+        return bool(self.enable_stop and int(action) == int(self.stop_action_idx))
+
     def is_explicit_noop(self, action: int) -> bool:
-        return bool(self.enable_noop and int(action) == int(self.noop_action_idx))
+        return self.is_explicit_stop(action)
 
 
 class ChemGymEnv(gym.Env):
@@ -140,11 +183,14 @@ class ChemGymEnv(gym.Env):
         self.action_spec = ActionSpec(
             n_sites=self.n_active_atoms,
             n_elements=self.n_elements,
-            enable_noop=bool(config.enable_noop_action),
+            action_mode=str(getattr(config, "action_mode", "mutation")).lower(),
+            enable_stop=bool(config.enable_noop_action),
         )
         # Backward-compatible public attributes for existing scripts.
         self.n_mutation_actions = self.action_spec.n_mutation_actions
+        self.n_swap_actions = self.action_spec.n_swap_actions
         self.noop_action_idx = self.action_spec.noop_action_idx
+        self.stop_action_idx = self.action_spec.stop_action_idx
         self.action_space = spaces.Discrete(self.action_spec.action_dim)
 
         if self.config.mode == "image":
@@ -306,20 +352,57 @@ class ChemGymEnv(gym.Env):
     def step(self, action: int):
         self.steps += 1
         debt_before = float(self.current_debt)
-        is_noop = self.action_spec.is_explicit_noop(action)
+        min_stop_steps = int(max(0, getattr(self.config, "min_stop_steps", 0)))
+        explicit_stop = self.action_spec.is_explicit_stop(action)
+        stop_allowed = self.steps >= min_stop_steps
+        is_stop = bool(explicit_stop and stop_allowed)
         site_idx = -1
         target_elem_idx = -1
+        swap_first_idx = -1
+        swap_second_idx = -1
+        action_mode = str(getattr(self.config, "action_mode", "mutation")).lower()
 
-        if not is_noop:
-            site_idx, target_elem_idx = self._action_to_indices(action)
-            if site_idx < 0 or site_idx >= self.n_active_atoms:
-                is_noop = True
+        if explicit_stop and not stop_allowed:
+            delta_omega = 0.0
+            reward, reward_terms = self._compose_reward_terms(
+                delta_omega=delta_omega,
+                debt_before=debt_before,
+                debt_after=debt_before,
+            )
+            self.current_debt = debt_before
+            self.last_reward_terms = reward_terms
+            terminated = not np.isfinite(reward)
+            if terminated:
+                reward = -100.0
+            truncated = self.steps >= self.config.max_steps
+            info = self._build_info(action_type="blocked_stop", delta_omega=delta_omega)
+            return self._state_to_observation(), float(reward), terminated, truncated, info
+
+        if not is_stop:
+            if action_mode == "swap":
+                swap_first_idx, swap_second_idx = self._action_to_swap_indices(action)
+                if (
+                    swap_first_idx < 0
+                    or swap_second_idx < 0
+                    or swap_first_idx >= self.n_active_atoms
+                    or swap_second_idx >= self.n_active_atoms
+                ):
+                    is_stop = True
+                else:
+                    first_elem_idx = int(self.state[swap_first_idx])
+                    second_elem_idx = int(self.state[swap_second_idx])
+                    if first_elem_idx == second_elem_idx:
+                        is_stop = True
             else:
-                current_elem_idx = int(self.state[site_idx])
-                if current_elem_idx == target_elem_idx:
-                    is_noop = True
+                site_idx, target_elem_idx = self._action_to_indices(action)
+                if site_idx < 0 or site_idx >= self.n_active_atoms:
+                    is_stop = True
+                else:
+                    current_elem_idx = int(self.state[site_idx])
+                    if current_elem_idx == target_elem_idx:
+                        is_stop = True
 
-        if is_noop:
+        if is_stop:
             delta_omega = 0.0
             reward, reward_terms = self._compose_reward_terms(
                 delta_omega=delta_omega,
@@ -330,14 +413,23 @@ class ChemGymEnv(gym.Env):
             self.noop_count += 1
             self.last_reward_terms = reward_terms
 
-            terminated = not np.isfinite(reward)
+            terminated = bool(getattr(self.config, "stop_terminates", False))
+            if not np.isfinite(reward):
+                terminated = True
             if terminated:
-                reward = -100.0
+                reward = float(reward if np.isfinite(reward) else -100.0)
             truncated = self.steps >= self.config.max_steps
-            info = self._build_info(action_type="no_op", delta_omega=delta_omega)
+            stop_type = "stop" if bool(getattr(self.config, "stop_terminates", False)) else "no_op"
+            info = self._build_info(action_type=stop_type, delta_omega=delta_omega)
             return self._state_to_observation(), float(reward), terminated, truncated, info
 
-        self.state[site_idx] = target_elem_idx
+        if action_mode == "swap":
+            first_elem_idx = int(self.state[swap_first_idx])
+            second_elem_idx = int(self.state[swap_second_idx])
+            self.state[swap_first_idx] = second_elem_idx
+            self.state[swap_second_idx] = first_elem_idx
+        else:
+            self.state[site_idx] = target_elem_idx
 
         self.atoms = self._build_atoms_from_state()
         (
@@ -386,43 +478,64 @@ class ChemGymEnv(gym.Env):
 
         truncated = self.steps >= self.config.max_steps
 
-        info = self._build_info(action_type="mutation", delta_omega=delta_omega)
+        action_type = "swap" if action_mode == "swap" else "mutation"
+        info = self._build_info(action_type=action_type, delta_omega=delta_omega)
         return self._state_to_observation(), float(reward), terminated, truncated, info
 
     def action_masks(self) -> np.ndarray:
         """Mask only invalid actions by default; optional deviation envelope for ablation."""
         mask = np.ones(self.action_space.n, dtype=bool)
-        for site_idx in range(self.n_active_atoms):
-            cur_elem = int(self.state[site_idx])
-            mask[self.action_spec.to_action(site_idx, cur_elem)] = False
+        action_mode = str(getattr(self.config, "action_mode", "mutation")).lower()
 
-        if self.noop_action_idx is not None:
-            mask[self.noop_action_idx] = True
+        if action_mode == "swap":
+            mask[:] = False
+            for first_idx in range(self.n_active_atoms - 1):
+                first_elem = int(self.state[first_idx])
+                for second_idx in range(first_idx + 1, self.n_active_atoms):
+                    second_elem = int(self.state[second_idx])
+                    if first_elem == second_elem:
+                        continue
+                    action_idx = self.action_spec.to_swap_action(first_idx, second_idx)
+                    if action_idx >= 0:
+                        mask[action_idx] = True
 
-        if bool(getattr(self.config, "use_deviation_mask", False)):
-            current_counts = np.bincount(self.state, minlength=self.n_elements)
-            diffs = current_counts - self.target_counts
+            if self.stop_action_idx is not None and self.steps >= int(max(0, getattr(self.config, "min_stop_steps", 0))):
+                mask[self.stop_action_idx] = True
 
-            for elem_idx in range(self.n_elements):
-                diff = int(diffs[elem_idx])
-
-                if diff <= -self.max_deviation:
-                    affected_sites = np.where(self.state == elem_idx)[0]
-                    for site_idx in affected_sites:
-                        start = int(site_idx * self.n_elements)
-                        mask[start : start + self.n_elements] = False
-
-                if diff >= self.max_deviation:
-                    mask[elem_idx : self.n_mutation_actions : self.n_elements] = False
-
-        mutation_mask = mask[: self.n_mutation_actions]
-        if not mutation_mask.any():
-            mask[: self.n_mutation_actions] = True
+            if not mask[: self.n_swap_actions].any() and self.stop_action_idx is None:
+                mask[: self.n_swap_actions] = True
+        else:
             for site_idx in range(self.n_active_atoms):
                 cur_elem = int(self.state[site_idx])
                 mask[self.action_spec.to_action(site_idx, cur_elem)] = False
+
             if self.noop_action_idx is not None:
                 mask[self.noop_action_idx] = True
+
+            if bool(getattr(self.config, "use_deviation_mask", False)):
+                current_counts = np.bincount(self.state, minlength=self.n_elements)
+                diffs = current_counts - self.target_counts
+
+                for elem_idx in range(self.n_elements):
+                    diff = int(diffs[elem_idx])
+
+                    if diff <= -self.max_deviation:
+                        affected_sites = np.where(self.state == elem_idx)[0]
+                        for site_idx in affected_sites:
+                            start = int(site_idx * self.n_elements)
+                            mask[start : start + self.n_elements] = False
+
+                    if diff >= self.max_deviation:
+                        mask[elem_idx : self.n_mutation_actions : self.n_elements] = False
+
+            mutation_mask = mask[: self.n_mutation_actions]
+            if not mutation_mask.any():
+                mask[: self.n_mutation_actions] = True
+                for site_idx in range(self.n_active_atoms):
+                    cur_elem = int(self.state[site_idx])
+                    mask[self.action_spec.to_action(site_idx, cur_elem)] = False
+                if self.noop_action_idx is not None:
+                    mask[self.noop_action_idx] = True
 
         return mask
 
@@ -469,14 +582,27 @@ class ChemGymEnv(gym.Env):
             else 0.0
         )
         step_penalty_term = -float(self.config.step_penalty)
-        reward = float(
-            delta_omega_term
-            + debt_improve_term
-            + debt_abs_term
-            - penalty_weighted
-            + uma_shaping
-            + step_penalty_term
-        )
+        reward_profile = str(getattr(self.config, "reward_profile", "delta_omega_plus_pbrs")).lower()
+        if reward_profile == "pure_delta_omega":
+            reward = float(delta_omega_term + step_penalty_term)
+        elif reward_profile == "delta_omega_plus_pbrs":
+            reward = float(delta_omega_term + uma_shaping + step_penalty_term)
+        else:
+            # Legacy mode: clip each auxiliary term individually to prevent any
+            # single component from dominating the total reward signal.
+            aux_clip = reward_clip
+            debt_improve_term = float(np.clip(debt_improve_term, -aux_clip, aux_clip))
+            debt_abs_term = float(np.clip(debt_abs_term, -aux_clip, aux_clip))
+            penalty_weighted = float(np.clip(penalty_weighted, 0.0, aux_clip))
+            uma_shaping = float(np.clip(uma_shaping, -aux_clip, aux_clip))
+            reward = float(
+                delta_omega_term
+                + debt_improve_term
+                + debt_abs_term
+                - penalty_weighted
+                + uma_shaping
+                + step_penalty_term
+            )
 
         terms = {
             "reward_total": float(reward),
@@ -492,6 +618,7 @@ class ChemGymEnv(gym.Env):
             "constraint_lambda": float(lam),
             "uma_shaping_term": float(uma_shaping),
             "step_penalty_term": float(step_penalty_term),
+            "reward_profile": reward_profile,
         }
         return float(reward), terms
 
@@ -869,6 +996,9 @@ class ChemGymEnv(gym.Env):
     def _action_to_indices(self, action: int) -> Tuple[int, int]:
         return self.action_spec.to_indices(action)
 
+    def _action_to_swap_indices(self, action: int) -> Tuple[int, int]:
+        return self.action_spec.to_swap_indices(action)
+
     def _compute_constraint_stats(self, state: np.ndarray) -> Tuple[float, float]:
         pd_idx = self.element_types.index("Pd")
         n_pd = int(np.sum(state == pd_idx))
@@ -941,6 +1071,10 @@ class ChemGymEnv(gym.Env):
             "mu_co": float(self.config.mu_co),
             "mu_co_is_effective": bool(self.config.mu_co_is_effective),
             "thermo_consistent_backend": bool(getattr(self.config, "thermo_consistent_backend", False)),
+            "action_mode": str(getattr(self.config, "action_mode", "mutation")),
+            "reward_profile": str(getattr(self.config, "reward_profile", "legacy")),
+            "stop_terminates": bool(getattr(self.config, "stop_terminates", False)),
+            "min_stop_steps": int(max(0, getattr(self.config, "min_stop_steps", 0))),
             "co_temperature_k": float(self.config.co_temperature_k),
             "co_partial_pressure_pa": None
             if self.config.co_partial_pressure_pa is None

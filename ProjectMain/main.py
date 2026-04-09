@@ -55,7 +55,7 @@ def parse_args():
     parser.add_argument(
         "--reward-profile",
         choices=["legacy", "pure_delta_omega", "delta_omega_plus_pbrs"],
-        default="legacy",
+        default="delta_omega_plus_pbrs",
     )
     parser.add_argument("--constraint-threshold-frac", type=float, default=0.12)
     parser.add_argument("--constraint-weight", type=float, default=1.0)
