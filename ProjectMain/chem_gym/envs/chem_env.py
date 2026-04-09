@@ -289,6 +289,7 @@ class ChemGymEnv(gym.Env):
             self.rng = np.random.default_rng(seed)
 
         self.steps = 0
+        self.energy_cache.clear()
 
         self.target_counts = self._sample_target_counts()
         self.state = self._sample_state_from_target(self.target_counts)
