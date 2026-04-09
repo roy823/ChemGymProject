@@ -132,6 +132,11 @@ def parse_args():
     parser.add_argument("--pirp-anneal-schedule", choices=["cosine", "linear"], default="cosine")
     parser.add_argument("--ppo-n-steps", type=int, default=512)
     parser.add_argument("--ppo-batch-size", type=int, default=128)
+    parser.add_argument("--max-grad-norm", type=float, default=0.5)
+    parser.add_argument("--lr-schedule", choices=["constant", "linear"], default="constant")
+    parser.add_argument("--eval-freq", type=int, default=0, help="Steps between eval (0=disable)")
+    parser.add_argument("--eval-episodes", type=int, default=5)
+    parser.add_argument("--early-stop-patience", type=int, default=0, help="Eval rounds without improvement before stop (0=disable)")
 
     # Uncertainty/oracle wrappers
     parser.add_argument("--uncertainty-penalty", type=float, default=0.0)
@@ -449,6 +454,11 @@ def launch_train(args):
         oracle_disable_amp=args.oracle_disable_amp,
         ppo_n_steps=args.ppo_n_steps,
         ppo_batch_size=args.ppo_batch_size,
+        max_grad_norm=args.max_grad_norm,
+        lr_schedule=args.lr_schedule,
+        eval_freq=args.eval_freq,
+        eval_episodes=args.eval_episodes,
+        early_stop_patience=args.early_stop_patience,
         use_pirp=args.use_pirp,
         pirp_scale=args.pirp_scale,
         noop_logit_bonus=args.noop_logit_bonus,

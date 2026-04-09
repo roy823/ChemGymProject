@@ -212,6 +212,17 @@ class TrainConfig:
     ppo_batch_size: int = 128
     ppo_clip_range: float = 0.2
     ppo_ent_coef: float = 0.001
+    max_grad_norm: float = 0.5
+    lr_schedule: str = "constant"  # "constant" or "linear"
+
+    # Evaluation during training
+    eval_freq: int = 10_000  # steps between eval episodes (0 = disable)
+    eval_episodes: int = 5
+
+    # Early stopping (based on eval reward)
+    early_stop_patience: int = 0  # 0 = disable
+    ppo_clip_range: float = 0.2
+    ppo_ent_coef: float = 0.001
 
     # PIRP knobs
     use_pirp: bool = False

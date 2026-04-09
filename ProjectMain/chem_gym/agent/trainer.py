@@ -9,7 +9,7 @@ import gymnasium as gym
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback, EvalCallback, StopTrainingOnNoModelImprovement
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from chem_gym.agent.graph_feature_extractor import CrystalGraphFeatureExtractor
@@ -217,7 +217,12 @@ def train_agent(
         model_class = MaskablePPO
         tb_log_name = "MaskablePPO_Experiment"
 
-        if env_config.mode == "graph" and train_config.use_pirp:
+        can_use_pirp = (
+            env_config.mode == "graph"
+            and train_config.use_pirp
+            and str(getattr(env_config, "action_mode", "mutation")).lower() == "mutation"
+        )
+        if can_use_pirp:
             policy = PIRPMaskableActorCriticPolicy
             policy_kwargs.update(
                 dict(
@@ -233,6 +238,8 @@ def train_agent(
             policy = "MultiInputPolicy" if env_config.mode == "graph" else "MlpPolicy"
             if train_config.use_pirp and env_config.mode != "graph":
                 print("[Trainer] PIRP requested but obs-mode is not graph. Falling back to base policy.")
+            elif train_config.use_pirp and str(getattr(env_config, "action_mode", "mutation")).lower() != "mutation":
+                print("[Trainer] PIRP currently supports mutation action_mode only. Falling back to base policy.")
             print("[Trainer] Initializing MaskablePPO (without PIRP)")
     else:
         model_class = PPO
@@ -242,12 +249,18 @@ def train_agent(
             print("[Trainer] PIRP requires use_masking=True in this implementation. Falling back to PPO base policy.")
         print("[Trainer] Initializing Standard PPO")
 
+    # Learning rate schedule
+    lr = train_config.learning_rate
+    if str(getattr(train_config, "lr_schedule", "constant")).lower() == "linear":
+        lr = lambda progress: float(progress) * train_config.learning_rate
+        print(f"[Trainer] Using linear LR schedule: {train_config.learning_rate} -> 0")
+
     model = model_class(
         policy,
         vec_env,
         policy_kwargs=policy_kwargs,
         verbose=1,
-        learning_rate=train_config.learning_rate,
+        learning_rate=lr,
         gamma=train_config.gamma,
         gae_lambda=train_config.lam,
         device=train_config.device,
@@ -255,6 +268,7 @@ def train_agent(
         batch_size=train_config.ppo_batch_size,
         clip_range=train_config.ppo_clip_range,
         ent_coef=train_config.ppo_ent_coef,
+        max_grad_norm=float(getattr(train_config, "max_grad_norm", 0.5)),
         tensorboard_log="./chem_gym_tensorboard/",
     )
 
@@ -290,6 +304,33 @@ def train_agent(
     if train_config.enable_visualization:
         vis_callback = VisualizationCallback(save_freq=200, save_dir=os.path.join(run_save_dir, "vis"))
         callback_list.insert(0, vis_callback)
+
+    # Evaluation callback with optional early stopping
+    eval_freq = int(getattr(train_config, "eval_freq", 0))
+    if eval_freq > 0:
+        eval_env = make_vec_env(
+            env_config, surrogate=None, train_config=train_config,
+            oracle_energy_fn=None, oracle=oracle, use_masking=use_masking,
+        )
+        eval_kwargs = dict(
+            eval_env=eval_env,
+            n_eval_episodes=int(getattr(train_config, "eval_episodes", 5)),
+            eval_freq=max(1, eval_freq // train_config.n_envs),
+            best_model_save_path=os.path.join(run_save_dir, "best_model"),
+            log_path=os.path.join(run_save_dir, "eval_logs"),
+            deterministic=False,
+        )
+        patience = int(getattr(train_config, "early_stop_patience", 0))
+        if patience > 0:
+            stop_cb = StopTrainingOnNoModelImprovement(
+                max_no_improvement_evals=patience, verbose=1,
+            )
+            eval_kwargs["callback_after_eval"] = stop_cb
+            print(f"[Trainer] Early stopping enabled: patience={patience} evals")
+        eval_callback = EvalCallback(**eval_kwargs)
+        callback_list.append(eval_callback)
+        print(f"[Trainer] Eval callback: every {eval_freq} steps, {eval_kwargs['n_eval_episodes']} episodes")
+
     callbacks = CallbackList(callback_list)
 
     print(f"[Trainer] Starting training run: {run_id}")
