@@ -35,11 +35,17 @@ from chem_gym.surrogate.oracle_protocol import evaluate_with_oracle, EnergyOracl
 
 @dataclass(frozen=True)
 class ActionSpec:
-    """Compact helper for mutation/swap/stop action indexing."""
+    """Compact helper for mutation/swap/noop/stop action indexing.
+
+    Action layout: [base_actions..., (noop), (stop)]
+    - noop: skip this step, episode continues
+    - stop: terminate the episode (only when stop_terminates=True)
+    """
 
     n_sites: int
     n_elements: int
     action_mode: str
+    enable_noop: bool
     enable_stop: bool
 
     @property
@@ -57,16 +63,25 @@ class ActionSpec:
         return int(self.n_mutation_actions)
 
     @property
-    def stop_action_idx(self) -> Optional[int]:
-        return int(self.base_action_dim) if self.enable_stop else None
+    def n_extra_actions(self) -> int:
+        return int(self.enable_noop) + int(self.enable_stop)
 
     @property
     def noop_action_idx(self) -> Optional[int]:
-        return self.stop_action_idx
+        if not self.enable_noop:
+            return None
+        return int(self.base_action_dim)
+
+    @property
+    def stop_action_idx(self) -> Optional[int]:
+        if not self.enable_stop:
+            return None
+        # stop comes right after noop (if noop exists) or right after base
+        return int(self.base_action_dim + int(self.enable_noop))
 
     @property
     def action_dim(self) -> int:
-        return int(self.base_action_dim + (1 if self.enable_stop else 0))
+        return int(self.base_action_dim + self.n_extra_actions)
 
     def to_action(self, site_idx: int, elem_idx: int) -> int:
         return int(site_idx * self.n_elements + elem_idx)
@@ -105,7 +120,7 @@ class ActionSpec:
         return bool(self.enable_stop and int(action) == int(self.stop_action_idx))
 
     def is_explicit_noop(self, action: int) -> bool:
-        return self.is_explicit_stop(action)
+        return bool(self.enable_noop and int(action) == int(self.noop_action_idx))
 
 
 class ChemGymEnv(gym.Env):
@@ -185,7 +200,8 @@ class ChemGymEnv(gym.Env):
             n_sites=self.n_active_atoms,
             n_elements=self.n_elements,
             action_mode=str(getattr(config, "action_mode", "mutation")).lower(),
-            enable_stop=bool(config.enable_noop_action),
+            enable_noop=bool(config.enable_noop_action),
+            enable_stop=bool(config.stop_terminates),
         )
         # Backward-compatible public attributes for existing scripts.
         self.n_mutation_actions = self.action_spec.n_mutation_actions
@@ -355,33 +371,27 @@ class ChemGymEnv(gym.Env):
     def step(self, action: int):
         self.steps += 1
         debt_before = float(self.current_debt)
-        min_stop_steps = int(max(0, getattr(self.config, "min_stop_steps", 0)))
+        action_mode = str(getattr(self.config, "action_mode", "mutation")).lower()
+
+        # --- Classify the action ---
+        explicit_noop = self.action_spec.is_explicit_noop(action)
         explicit_stop = self.action_spec.is_explicit_stop(action)
-        stop_allowed = self.steps >= min_stop_steps
-        is_stop = bool(explicit_stop and stop_allowed)
+        is_noop = explicit_noop  # noop: skip step, episode continues
+        is_stop = explicit_stop  # stop: terminate episode
+        min_stop_steps = int(max(0, getattr(self.config, "min_stop_steps", 0)))
+
+        # Block early stop: treat as noop
+        if explicit_stop and self.steps < min_stop_steps:
+            is_stop = False
+            is_noop = True
+
         site_idx = -1
         target_elem_idx = -1
         swap_first_idx = -1
         swap_second_idx = -1
-        action_mode = str(getattr(self.config, "action_mode", "mutation")).lower()
 
-        if explicit_stop and not stop_allowed:
-            delta_omega = 0.0
-            reward, reward_terms = self._compose_reward_terms(
-                delta_omega=delta_omega,
-                debt_before=debt_before,
-                debt_after=debt_before,
-            )
-            self.current_debt = debt_before
-            self.last_reward_terms = reward_terms
-            terminated = not np.isfinite(reward)
-            if terminated:
-                reward = -100.0
-            truncated = self.steps >= self.config.max_steps
-            info = self._build_info(action_type="blocked_stop", delta_omega=delta_omega)
-            return self._state_to_observation(), float(reward), terminated, truncated, info
-
-        if not is_stop:
+        # If not noop/stop, decode the base action; identity mutations become noop
+        if not is_noop and not is_stop:
             if action_mode == "swap":
                 swap_first_idx, swap_second_idx = self._action_to_swap_indices(action)
                 if (
@@ -390,22 +400,23 @@ class ChemGymEnv(gym.Env):
                     or swap_first_idx >= self.n_active_atoms
                     or swap_second_idx >= self.n_active_atoms
                 ):
-                    is_stop = True
+                    is_noop = True
                 else:
                     first_elem_idx = int(self.state[swap_first_idx])
                     second_elem_idx = int(self.state[swap_second_idx])
                     if first_elem_idx == second_elem_idx:
-                        is_stop = True
+                        is_noop = True
             else:
                 site_idx, target_elem_idx = self._action_to_indices(action)
                 if site_idx < 0 or site_idx >= self.n_active_atoms:
-                    is_stop = True
+                    is_noop = True
                 else:
                     current_elem_idx = int(self.state[site_idx])
                     if current_elem_idx == target_elem_idx:
-                        is_stop = True
+                        is_noop = True
 
-        if is_stop:
+        # --- Handle noop (no state change, episode continues) ---
+        if is_noop:
             delta_omega = 0.0
             reward, reward_terms = self._compose_reward_terms(
                 delta_omega=delta_omega,
@@ -415,16 +426,28 @@ class ChemGymEnv(gym.Env):
             self.current_debt = debt_before
             self.noop_count += 1
             self.last_reward_terms = reward_terms
-
-            terminated = bool(getattr(self.config, "stop_terminates", False))
-            if not np.isfinite(reward):
-                terminated = True
+            terminated = not np.isfinite(reward)
             if terminated:
-                reward = float(reward if np.isfinite(reward) else -100.0)
+                reward = -100.0
             truncated = self.steps >= self.config.max_steps
-            stop_type = "stop" if bool(getattr(self.config, "stop_terminates", False)) else "no_op"
-            info = self._build_info(action_type=stop_type, delta_omega=delta_omega)
+            info = self._build_info(action_type="no_op", delta_omega=delta_omega)
             return self._state_to_observation(), float(reward), terminated, truncated, info
+
+        # --- Handle explicit stop (terminate episode) ---
+        if is_stop:
+            delta_omega = 0.0
+            reward, reward_terms = self._compose_reward_terms(
+                delta_omega=delta_omega,
+                debt_before=debt_before,
+                debt_after=debt_before,
+            )
+            self.current_debt = debt_before
+            self.last_reward_terms = reward_terms
+            terminated = True
+            if not np.isfinite(reward):
+                reward = -100.0
+            info = self._build_info(action_type="stop", delta_omega=delta_omega)
+            return self._state_to_observation(), float(reward), terminated, False, info
 
         if action_mode == "swap":
             first_elem_idx = int(self.state[swap_first_idx])
@@ -502,18 +525,12 @@ class ChemGymEnv(gym.Env):
                     if action_idx >= 0:
                         mask[action_idx] = True
 
-            if self.stop_action_idx is not None and self.steps >= int(max(0, getattr(self.config, "min_stop_steps", 0))):
-                mask[self.stop_action_idx] = True
-
-            if not mask[: self.n_swap_actions].any() and self.stop_action_idx is None:
+            if not mask[: self.n_swap_actions].any():
                 mask[: self.n_swap_actions] = True
         else:
             for site_idx in range(self.n_active_atoms):
                 cur_elem = int(self.state[site_idx])
                 mask[self.action_spec.to_action(site_idx, cur_elem)] = False
-
-            if self.noop_action_idx is not None:
-                mask[self.noop_action_idx] = True
 
             if bool(getattr(self.config, "use_deviation_mask", False)):
                 current_counts = np.bincount(self.state, minlength=self.n_elements)
@@ -537,8 +554,14 @@ class ChemGymEnv(gym.Env):
                 for site_idx in range(self.n_active_atoms):
                     cur_elem = int(self.state[site_idx])
                     mask[self.action_spec.to_action(site_idx, cur_elem)] = False
-                if self.noop_action_idx is not None:
-                    mask[self.noop_action_idx] = True
+
+        # Noop is always available when enabled
+        if self.noop_action_idx is not None:
+            mask[self.noop_action_idx] = True
+        # Stop is available only after min_stop_steps
+        if self.stop_action_idx is not None:
+            min_stop_steps = int(max(0, getattr(self.config, "min_stop_steps", 0)))
+            mask[self.stop_action_idx] = self.steps >= min_stop_steps
 
         return mask
 

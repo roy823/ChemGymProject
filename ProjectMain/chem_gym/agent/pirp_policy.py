@@ -39,11 +39,12 @@ class PIRPMaskableActorCriticPolicy(MaskableActorCriticPolicy):
 
         self.base_action_dim = (self.action_space.n // self.pirp_n_elements) * self.pirp_n_elements
         self.extra_action_dim = int(self.action_space.n - self.base_action_dim)
-        if self.extra_action_dim not in {0, 1}:
+        if self.extra_action_dim not in {0, 1, 2}:
             raise ValueError(
-                "PIRP policy supports action spaces with optional single extra action (e.g. no-op)."
+                "PIRP policy supports action spaces with up to 2 extra actions (noop + stop)."
             )
-        self.noop_action_idx = int(self.base_action_dim) if self.extra_action_dim == 1 else None
+        # Noop is the first extra action (if any); stop is the second.
+        self.noop_action_idx = int(self.base_action_dim) if self.extra_action_dim >= 1 else None
         self.n_sites = self.base_action_dim // self.pirp_n_elements
 
         hidden_dim = getattr(self.features_extractor, "hidden_dim", 128)
