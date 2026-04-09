@@ -61,56 +61,24 @@ class GraphFeatureLayout:
 
 
 @dataclass
-class EnvConfig:
-    mode: str = "graph"  # "image" or "graph"
-    element_types: List[str] = field(default_factory=lambda: ["Cu", "Pd"])
-    slab_size: Tuple[int, int] = (4, 4)
-    n_layers: int = 4
-    n_active_layers: int = 4
-    graph_cutoff: float = 6.0
-    graph_sigma: float = 2.0
-    max_steps: int = 800
-    step_penalty: float = 0.0
-    init_seed: Optional[int] = None
-    render_mode: Optional[str] = None  # "human" or "rgb_array"
-    use_edge_features: bool = True
-    n_rbf: int = 10
-    rbf_cutoff: float = 6.0
-
-    # Cu-Pd composition control
-    substrate_element: str = "Cu"
-    bulk_pd_fraction: Optional[float] = 0.08
-    bulk_pd_fraction_range: Tuple[float, float] = (0.05, 0.10)
-    max_deviation: Optional[int] = None
-
-    # Reward core terms.
+class RewardConfig:
+    """Reward assembly parameters."""
     mu_co: float = -1.0
-    # If provided by higher-level launcher from (T, p), mu_co should be this effective value.
     mu_co_is_effective: bool = False
     omega_reward_scale: float = 1.0
     delta_omega_scale: float = 1.0
-    # Debt shaping terms (normalized by n_active_atoms^2 inside env).
     debt_improvement_scale: float = 0.1
     debt_abs_penalty: float = 0.0
-    # Legacy field kept for compatibility; currently unused in reward assembly.
     reward_shift: float = 0.1
-    # Reward v2: linear physical main term with clipping.
     linear_reward_clip: float = 3.0
-    # If True, evaluate slab reference energy in the same adsorbate-capable backend
-    # as E(slab+CO), avoiding cross-backend mismatch in Omega.
     thermo_consistent_backend: bool = True
+    step_penalty: float = 0.0
+    reward_profile: str = "delta_omega_plus_pbrs"
 
-    # Action-space and masking behavior
-    action_mode: str = "mutation"  # "mutation" or "swap"
-    enable_noop_action: bool = True
-    stop_terminates: bool = False
-    min_stop_steps: int = 0
-    use_deviation_mask: bool = False
 
-    # Reward assembly mode
-    reward_profile: str = "delta_omega_plus_pbrs"  # "legacy", "pure_delta_omega", "delta_omega_plus_pbrs"
-
-    # PID-Lagrangian soft composition constraint
+@dataclass
+class ConstraintConfig:
+    """PID-Lagrangian soft composition constraint."""
     constraint_threshold_frac: float = 0.12
     constraint_weight: float = 1.0
     constraint_lambda_init: float = 1.0
@@ -120,20 +88,13 @@ class EnvConfig:
     constraint_pid_ki: float = 0.01
     constraint_pid_kd: float = 0.01
     constraint_integral_clip: float = 100.0
-    # Lambda update schedule:
-    # - "step": update lambda at every env step
-    # - "rollout": update lambda once per rollout in trainer callback
-    # - "frozen": keep lambda fixed
     constraint_update_mode: str = "rollout"
     constraint_rollout_gain: float = 1.0
 
-    # UMA potential-based reward shaping (PBRS)
-    use_uma_pbrs: bool = True
-    uma_pbrs_gamma: float = 0.97
-    uma_pbrs_scale: float = 50.0
-    uma_pbrs_weight: float = 1.0
 
-    # Lightweight CO adsorption heuristic
+@dataclass
+class COAdsorptionConfig:
+    """Lightweight CO adsorption heuristic parameters."""
     enable_co_adsorption: bool = True
     co_max_coverage: float = 1.0
     co_site_height: float = 1.85
@@ -149,10 +110,52 @@ class EnvConfig:
     co_repulsion_distance_a: float = 3.0
     co_repulsion_strength_ev: float = 0.15
     co_repulsion_sigma_a: float = 2.0
-
-    # Single source of truth for site-level CO adsorption constants (eV).
     e_cu_co: float = -0.55
     e_pd_co: float = -1.35
+
+
+@dataclass
+class UMAPBRSConfig:
+    """UMA potential-based reward shaping."""
+    use_uma_pbrs: bool = True
+    uma_pbrs_gamma: float = 0.97
+    uma_pbrs_scale: float = 50.0
+    uma_pbrs_weight: float = 1.0
+
+
+@dataclass
+class EnvConfig:
+    # --- Slab / graph topology ---
+    mode: str = "graph"  # "image" or "graph"
+    element_types: List[str] = field(default_factory=lambda: ["Cu", "Pd"])
+    slab_size: Tuple[int, int] = (4, 4)
+    n_layers: int = 4
+    n_active_layers: int = 4
+    graph_cutoff: float = 6.0
+    graph_sigma: float = 2.0
+    max_steps: int = 800
+    init_seed: Optional[int] = None
+    render_mode: Optional[str] = None
+    use_edge_features: bool = True
+    n_rbf: int = 10
+    rbf_cutoff: float = 6.0
+    substrate_element: str = "Cu"
+    bulk_pd_fraction: Optional[float] = 0.08
+    bulk_pd_fraction_range: Tuple[float, float] = (0.05, 0.10)
+    max_deviation: Optional[int] = None
+
+    # --- Action space ---
+    action_mode: str = "mutation"
+    enable_noop_action: bool = True
+    stop_terminates: bool = False
+    min_stop_steps: int = 0
+    use_deviation_mask: bool = False
+
+    # --- Sub-configs (fields exposed for direct access via __post_init__) ---
+    reward: RewardConfig = field(default_factory=RewardConfig)
+    constraint: ConstraintConfig = field(default_factory=ConstraintConfig)
+    co_adsorption: COAdsorptionConfig = field(default_factory=COAdsorptionConfig)
+    uma_pbrs: UMAPBRSConfig = field(default_factory=UMAPBRSConfig)
 
     # Analytical physical prior constants for PIRP
     physics_prior: Dict[str, float] = field(
@@ -160,22 +163,34 @@ class EnvConfig:
             "gamma_cu": 1.0,
             "gamma_pd": 1.3,
             "strain_coeff": 1.0,
-            # These are synchronized with e_cu_co/e_pd_co in __post_init__.
             "e_cu_co": -0.55,
             "e_pd_co": -1.35,
         }
     )
 
     def __post_init__(self) -> None:
-        # Keep physics_prior adsorption constants synchronized with explicit fields.
+        # Flatten sub-config fields onto self for backward compatibility.
+        # All existing code using config.mu_co, config.constraint_weight, etc.
+        # continues to work without changes.
+        for sub in (self.reward, self.constraint, self.co_adsorption, self.uma_pbrs):
+            for f_name in sub.__dataclass_fields__:
+                if not hasattr(self, f_name):
+                    object.__setattr__(self, f_name, getattr(sub, f_name))
+
+        # Keep physics_prior adsorption constants synchronized with CO config.
         prior = dict(self.physics_prior or {})
+        e_cu_co = float(self.co_adsorption.e_cu_co)
+        e_pd_co = float(self.co_adsorption.e_pd_co)
         if "e_cu_co" in prior and prior["e_cu_co"] is not None:
-            self.e_cu_co = float(prior["e_cu_co"])
+            e_cu_co = float(prior["e_cu_co"])
         if "e_pd_co" in prior and prior["e_pd_co"] is not None:
-            self.e_pd_co = float(prior["e_pd_co"])
-        prior["e_cu_co"] = float(self.e_cu_co)
-        prior["e_pd_co"] = float(self.e_pd_co)
+            e_pd_co = float(prior["e_pd_co"])
+        prior["e_cu_co"] = e_cu_co
+        prior["e_pd_co"] = e_pd_co
         self.physics_prior = prior
+        # Expose as top-level for convenience
+        object.__setattr__(self, "e_cu_co", e_cu_co)
+        object.__setattr__(self, "e_pd_co", e_pd_co)
 
 
 @dataclass

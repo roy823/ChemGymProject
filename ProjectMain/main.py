@@ -6,7 +6,10 @@ import torch
 
 from chem_gym.agent.trainer import train_agent
 from chem_gym.baselines import random_search, simulated_annealing
-from chem_gym.config import EnvConfig, SurrogateConfig, TrainConfig
+from chem_gym.config import (
+    COAdsorptionConfig, ConstraintConfig, EnvConfig,
+    RewardConfig, SurrogateConfig, TrainConfig, UMAPBRSConfig,
+)
 from chem_gym.envs.chem_env import ChemGymEnv
 from chem_gym.surrogate.ensemble import SurrogateEnsemble
 from chem_gym.surrogate.hybrid_oracle import HybridGrandPotentialOracle
@@ -318,14 +321,9 @@ def build_env_config(args) -> EnvConfig:
 
     uma_pbrs_gamma = float(args.gamma) if args.uma_pbrs_gamma is None else float(args.uma_pbrs_gamma)
 
-    return EnvConfig(
-        mode=args.obs_mode,
-        init_seed=args.seed,
-        n_active_layers=args.n_active_layers,
+    reward_cfg = RewardConfig(
         mu_co=mu_co,
         mu_co_is_effective=use_effective_mu,
-        bulk_pd_fraction=args.bulk_pd_fraction,
-        step_penalty=args.step_penalty,
         omega_reward_scale=args.omega_reward_scale,
         delta_omega_scale=args.delta_omega_scale,
         debt_improvement_scale=args.debt_improvement_scale,
@@ -333,12 +331,10 @@ def build_env_config(args) -> EnvConfig:
         reward_shift=args.reward_shift,
         linear_reward_clip=args.linear_reward_clip,
         thermo_consistent_backend=not args.disable_thermo_consistent_backend,
-        action_mode=args.action_mode,
-        enable_noop_action=not args.disable_noop_action,
-        stop_terminates=args.stop_terminates,
-        min_stop_steps=args.min_stop_steps,
-        use_deviation_mask=args.enable_deviation_mask,
+        step_penalty=args.step_penalty,
         reward_profile=args.reward_profile,
+    )
+    constraint_cfg = ConstraintConfig(
         constraint_threshold_frac=args.constraint_threshold_frac,
         constraint_weight=args.constraint_weight,
         constraint_lambda_init=args.constraint_lambda_init,
@@ -350,10 +346,9 @@ def build_env_config(args) -> EnvConfig:
         constraint_integral_clip=args.constraint_integral_clip,
         constraint_update_mode=args.constraint_update_mode,
         constraint_rollout_gain=args.constraint_rollout_gain,
-        use_uma_pbrs=not args.disable_uma_pbrs,
-        uma_pbrs_gamma=uma_pbrs_gamma,
-        uma_pbrs_scale=args.uma_pbrs_scale,
-        uma_pbrs_weight=args.uma_pbrs_weight,
+    )
+    co_cfg = COAdsorptionConfig(
+        enable_co_adsorption=not args.disable_co_adsorption,
         co_max_coverage=args.co_max_coverage,
         co_gas_ref_energy=args.co_gas_ref_energy,
         co_temperature_k=args.co_temperature_k,
@@ -365,9 +360,30 @@ def build_env_config(args) -> EnvConfig:
         co_repulsion_strength_ev=args.co_repulsion_strength_ev,
         co_repulsion_sigma_a=args.co_repulsion_sigma_a,
         use_relative_mu_co=not args.absolute_mu_co,
-        enable_co_adsorption=not args.disable_co_adsorption,
         e_cu_co=e_cu_co,
         e_pd_co=e_pd_co,
+    )
+    uma_cfg = UMAPBRSConfig(
+        use_uma_pbrs=not args.disable_uma_pbrs,
+        uma_pbrs_gamma=uma_pbrs_gamma,
+        uma_pbrs_scale=args.uma_pbrs_scale,
+        uma_pbrs_weight=args.uma_pbrs_weight,
+    )
+
+    return EnvConfig(
+        mode=args.obs_mode,
+        init_seed=args.seed,
+        n_active_layers=args.n_active_layers,
+        bulk_pd_fraction=args.bulk_pd_fraction,
+        action_mode=args.action_mode,
+        enable_noop_action=not args.disable_noop_action,
+        stop_terminates=args.stop_terminates,
+        min_stop_steps=args.min_stop_steps,
+        use_deviation_mask=args.enable_deviation_mask,
+        reward=reward_cfg,
+        constraint=constraint_cfg,
+        co_adsorption=co_cfg,
+        uma_pbrs=uma_cfg,
         physics_prior=physics_prior,
     )
 
