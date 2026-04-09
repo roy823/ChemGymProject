@@ -30,6 +30,7 @@ from chem_gym.physics.co_placer import GreedyCOPlacer
 from chem_gym.physics.analytical_prior import build_prior_constants
 from chem_gym.physics.pid_lagrangian import PIDLagrangianConstraint
 from chem_gym.physics.uma_shaping import UMAPotentialShaper
+from chem_gym.surrogate.oracle_protocol import evaluate_with_oracle, EnergyOracle
 
 
 @dataclass(frozen=True)
@@ -831,67 +832,15 @@ class ChemGymEnv(gym.Env):
             self._record_backend(role, backend)
             return energy, unc
 
-        # 1) High-fidelity oracle
+        # 1) High-fidelity oracle via unified protocol dispatch
         if self.oracle is not None:
-            if role == "slab" and hasattr(self.oracle, "compute_slab_energy"):
-                try:
-                    energy = float(self.oracle.compute_slab_energy(atoms, relax=False))
-                    result = (energy, 0.0, "oracle:compute_slab_energy")
-                    self.energy_cache[key] = result
-                    self._record_backend(role, result[2])
-                    return result[0], result[1]
-                except Exception:
-                    pass
-
-            if role in {"ads_system", "ads_reference"} and hasattr(self.oracle, "evaluate_adsorbate_system_energy"):
-                try:
-                    mean_e, std_e = self.oracle.evaluate_adsorbate_system_energy(atoms, relax=False)
-                    result = (float(mean_e), float(std_e), "oracle:evaluate_adsorbate_system_energy")
-                    self.energy_cache[key] = result
-                    self._record_backend(role, result[2])
-                    return result[0], result[1]
-                except Exception:
-                    pass
-
-            if role in {"ads_system", "ads_reference"} and hasattr(self.oracle, "compute_adsorbate_system_energy"):
-                try:
-                    energy = float(self.oracle.compute_adsorbate_system_energy(atoms, relax=False))
-                    result = (energy, 0.0, "oracle:compute_adsorbate_system_energy")
-                    self.energy_cache[key] = result
-                    self._record_backend(role, result[2])
-                    return result[0], result[1]
-                except Exception:
-                    pass
-
-            if hasattr(self.oracle, "evaluate_energy"):
-                try:
-                    mean_e, std_e = self.oracle.evaluate_energy(atoms, relax=False)
-                    result = (float(mean_e), float(std_e), "oracle:evaluate_energy")
-                    self.energy_cache[key] = result
-                    self._record_backend(role, result[2])
-                    return result[0], result[1]
-                except Exception:
-                    pass
-
-            if hasattr(self.oracle, "compute_total_energy"):
-                try:
-                    energy = float(self.oracle.compute_total_energy(atoms, relax=False))
-                    result = (energy, 0.0, "oracle:compute_total_energy")
-                    self.energy_cache[key] = result
-                    self._record_backend(role, result[2])
-                    return result[0], result[1]
-                except Exception:
-                    pass
-
-            if hasattr(self.oracle, "compute_energy"):
-                try:
-                    energy = float(self.oracle.compute_energy(atoms, relax=False))
-                    result = (energy, 0.0, "oracle:compute_energy")
-                    self.energy_cache[key] = result
-                    self._record_backend(role, result[2])
-                    return result[0], result[1]
-                except Exception:
-                    pass
+            try:
+                energy, unc, backend = evaluate_with_oracle(self.oracle, atoms, role)
+                self.energy_cache[key] = (energy, unc, backend)
+                self._record_backend(role, backend)
+                return energy, unc
+            except Exception:
+                pass
 
         # 2) Surrogate ensemble
         if self.surrogate is not None and hasattr(self.surrogate, "evaluate"):
