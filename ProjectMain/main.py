@@ -19,9 +19,9 @@ def parse_args():
     parser.add_argument("--mode", choices=["train", "baseline", "eval"], default="train")
     parser.add_argument(
         "--experiment-profile",
-        choices=["default", "route_a"],
+        choices=["default", "route_a", "swap_stop"],
         default="default",
-        help="Apply a curated parameter bundle. route_a = hard mask + debt shaping + no UMA PBRS.",
+        help="Apply a curated parameter bundle. route_a = hard mask + debt shaping + no UMA PBRS; swap_stop = swap-only + stop + pure DeltaOmega.",
     )
     parser.add_argument("--obs-mode", choices=["image", "graph"], default="graph")
     parser.add_argument("--total-steps", type=int, default=5000)
@@ -47,8 +47,16 @@ def parse_args():
         action="store_true",
         help="Use legacy hybrid Omega with cross-backend slab term (for ablation only).",
     )
+    parser.add_argument("--action-mode", choices=["mutation", "swap"], default="mutation")
     parser.add_argument("--disable-noop-action", action="store_true")
+    parser.add_argument("--stop-terminates", action="store_true")
+    parser.add_argument("--min-stop-steps", type=int, default=0)
     parser.add_argument("--enable-deviation-mask", action="store_true")
+    parser.add_argument(
+        "--reward-profile",
+        choices=["legacy", "pure_delta_omega", "delta_omega_plus_pbrs"],
+        default="legacy",
+    )
     parser.add_argument("--constraint-threshold-frac", type=float, default=0.12)
     parser.add_argument("--constraint-weight", type=float, default=1.0)
     parser.add_argument("--constraint-lambda-init", type=float, default=1.0)
@@ -144,6 +152,24 @@ def parse_args():
 def apply_experiment_profile(args) -> None:
     profile = str(getattr(args, "experiment_profile", "default")).lower()
     if profile != "route_a":
+        if profile != "swap_stop":
+            return
+
+        # Fixed-composition local-search baseline.
+        args.action_mode = "swap"
+        args.disable_noop_action = False
+        args.stop_terminates = True
+        args.min_stop_steps = max(int(getattr(args, "min_stop_steps", 0)), 8)
+        args.reward_profile = "pure_delta_omega"
+        args.disable_uma_pbrs = True
+        args.constraint_update_mode = "frozen"
+        args.constraint_weight = 0.0
+        args.constraint_lambda_init = 0.0
+        args.constraint_lambda_min = 0.0
+        args.constraint_lambda_max = 0.0
+        args.enable_deviation_mask = False
+        if float(args.noop_logit_bonus) <= 0.0:
+            args.noop_logit_bonus = 0.25
         return
 
     # Route A (SAGCM-like): hard boundary + dense debt guidance, avoid conflicting shaping.
@@ -307,8 +333,12 @@ def build_env_config(args) -> EnvConfig:
         reward_shift=args.reward_shift,
         linear_reward_clip=args.linear_reward_clip,
         thermo_consistent_backend=not args.disable_thermo_consistent_backend,
+        action_mode=args.action_mode,
         enable_noop_action=not args.disable_noop_action,
+        stop_terminates=args.stop_terminates,
+        min_stop_steps=args.min_stop_steps,
         use_deviation_mask=args.enable_deviation_mask,
+        reward_profile=args.reward_profile,
         constraint_threshold_frac=args.constraint_threshold_frac,
         constraint_weight=args.constraint_weight,
         constraint_lambda_init=args.constraint_lambda_init,
@@ -354,8 +384,12 @@ def launch_train(args):
         f"Eads(Cu)={env_config.e_cu_co:.3f} eV, "
         f"Eads(Pd)={env_config.e_pd_co:.3f} eV, "
         f"thermo_consistent={env_config.thermo_consistent_backend}, "
+        f"action_mode={env_config.action_mode}, "
         f"noop={env_config.enable_noop_action}, "
+        f"stop_terminates={env_config.stop_terminates}, "
+        f"min_stop_steps={env_config.min_stop_steps}, "
         f"deviation_mask={env_config.use_deviation_mask}, "
+        f"reward_profile={env_config.reward_profile}, "
         f"uma_pbrs={env_config.use_uma_pbrs}, "
         f"gamma={args.gamma:.4f}, "
         f"uma_pbrs_gamma={env_config.uma_pbrs_gamma:.4f}, "
@@ -375,6 +409,24 @@ def launch_train(args):
         surrogate = SurrogateEnsemble(config=surrogate_cfg)
     else:
         print("[Main] Surrogate disabled.")
+
+    # Safety check: warn when neither a real oracle nor a trained surrogate is available.
+    if oracle is None and surrogate is not None:
+        import warnings
+        warnings.warn(
+            "[Main] WARNING: No oracle loaded. The surrogate ensemble uses random "
+            "noise models and does NOT depend on atomic structure. Energy evaluations "
+            "will fall back to EMT, which is inaccurate for CO adsorption. Training "
+            "results may be meaningless. Consider providing --eq2-ckpt or --uma-ckpt.",
+            stacklevel=2,
+        )
+    elif oracle is None and surrogate is None:
+        import warnings
+        warnings.warn(
+            "[Main] WARNING: Neither oracle nor surrogate is available. All energy "
+            "evaluations will use EMT fallback. This is only suitable for smoke tests.",
+            stacklevel=2,
+        )
 
     train_config = TrainConfig(
         total_timesteps=args.total_steps,
@@ -402,7 +454,7 @@ def launch_train(args):
         env_config=env_config,
         train_config=train_config,
         surrogate=surrogate,
-        oracle_energy_fn=oracle,
+        oracle_energy_fn=oracle.compute_energy if hasattr(oracle, "compute_energy") else None,
         oracle=oracle,
         save_dir=args.save_dir,
         use_masking=args.use_masking,
@@ -411,6 +463,8 @@ def launch_train(args):
 
 def launch_baselines(args):
     env_config = build_env_config(args)
+    if str(getattr(env_config, "action_mode", "mutation")).lower() != "mutation":
+        raise ValueError("Baseline search helpers currently support action_mode='mutation' only.")
     env = ChemGymEnv(env_config)
 
     print("Running random search...")

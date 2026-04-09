@@ -19,3 +19,15 @@ Download.py
 env/
 venv/
 .env/
+
+# PDF 论文文件
+*.pdf
+
+# 训练结果与可视化
+**/vis/
+**/runs/
+*.xyz
+*.traj
+
+# Claude Code memory
+.claude/

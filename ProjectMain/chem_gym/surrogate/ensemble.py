@@ -40,6 +40,12 @@ class SurrogateEnsemble:
         if not self.models:
             seeds = self.config.seeds or list(range(self.config.n_models))
             self.models = [self._random_model(seed) for seed in seeds[: self.config.n_models]]
+            import warnings
+            warnings.warn(
+                "SurrogateEnsemble: no real models provided; using random noise "
+                "placeholders that ignore atomic structure.",
+                stacklevel=2,
+            )
         self.cache: Dict[str, Prediction] = {}
 
     def evaluate(self, atoms: Optional["Atoms"]) -> Prediction:
