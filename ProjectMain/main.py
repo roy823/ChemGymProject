@@ -1,4 +1,5 @@
 ﻿import argparse
+import dataclasses
 import math
 from pathlib import Path
 
@@ -14,6 +15,27 @@ from chem_gym.envs.chem_env import ChemGymEnv
 from chem_gym.surrogate.ensemble import SurrogateEnsemble
 from chem_gym.surrogate.hybrid_oracle import HybridGrandPotentialOracle
 from chem_gym.surrogate.ocp_model import EquiformerV2Oracle, OC25EnsembleOracle, UMAOracle
+
+
+def _fill_dataclass(cls, namespace, overrides=None):
+    """Create a dataclass instance from an argparse Namespace.
+
+    For each field in `cls`, look for an attribute with the same name
+    (underscores matching hyphens) on `namespace`. Fields not found on
+    the namespace are left at their dataclass defaults. Explicit
+    `overrides` dict takes precedence.
+    """
+    kwargs = {}
+    for f in dataclasses.fields(cls):
+        name = f.name
+        if overrides and name in overrides:
+            kwargs[name] = overrides[name]
+        elif hasattr(namespace, name):
+            kwargs[name] = getattr(namespace, name)
+        # Also try hyphen-to-underscore variants from argparse
+        elif hasattr(namespace, name.replace("_", "-")):
+            kwargs[name] = getattr(namespace, name.replace("_", "-"))
+    return cls(**kwargs)
 
 
 def parse_args():
@@ -321,54 +343,24 @@ def build_env_config(args) -> EnvConfig:
 
     uma_pbrs_gamma = float(args.gamma) if args.uma_pbrs_gamma is None else float(args.uma_pbrs_gamma)
 
-    reward_cfg = RewardConfig(
-        mu_co=mu_co,
-        mu_co_is_effective=use_effective_mu,
-        omega_reward_scale=args.omega_reward_scale,
-        delta_omega_scale=args.delta_omega_scale,
-        debt_improvement_scale=args.debt_improvement_scale,
-        debt_abs_penalty=args.debt_abs_penalty,
-        reward_shift=args.reward_shift,
-        linear_reward_clip=args.linear_reward_clip,
-        thermo_consistent_backend=not args.disable_thermo_consistent_backend,
-        step_penalty=args.step_penalty,
-        reward_profile=args.reward_profile,
-    )
-    constraint_cfg = ConstraintConfig(
-        constraint_threshold_frac=args.constraint_threshold_frac,
-        constraint_weight=args.constraint_weight,
-        constraint_lambda_init=args.constraint_lambda_init,
-        constraint_lambda_min=args.constraint_lambda_min,
-        constraint_lambda_max=args.constraint_lambda_max,
-        constraint_pid_kp=args.constraint_pid_kp,
-        constraint_pid_ki=args.constraint_pid_ki,
-        constraint_pid_kd=args.constraint_pid_kd,
-        constraint_integral_clip=args.constraint_integral_clip,
-        constraint_update_mode=args.constraint_update_mode,
-        constraint_rollout_gain=args.constraint_rollout_gain,
-    )
-    co_cfg = COAdsorptionConfig(
-        enable_co_adsorption=not args.disable_co_adsorption,
-        co_max_coverage=args.co_max_coverage,
-        co_gas_ref_energy=args.co_gas_ref_energy,
-        co_temperature_k=args.co_temperature_k,
-        co_ref_pressure_pa=args.co_ref_pressure_pa,
-        co_partial_pressure_pa=args.co_partial_pressure_pa,
-        co_mu_ref_ev=args.co_mu_ref_ev,
-        co_use_langmuir_target=not args.disable_co_langmuir_target,
-        co_repulsion_distance_a=args.co_repulsion_distance_a,
-        co_repulsion_strength_ev=args.co_repulsion_strength_ev,
-        co_repulsion_sigma_a=args.co_repulsion_sigma_a,
-        use_relative_mu_co=not args.absolute_mu_co,
-        e_cu_co=e_cu_co,
-        e_pd_co=e_pd_co,
-    )
-    uma_cfg = UMAPBRSConfig(
-        use_uma_pbrs=not args.disable_uma_pbrs,
-        uma_pbrs_gamma=uma_pbrs_gamma,
-        uma_pbrs_scale=args.uma_pbrs_scale,
-        uma_pbrs_weight=args.uma_pbrs_weight,
-    )
+    # Sub-configs: auto-fill matching fields, override special cases
+    reward_cfg = _fill_dataclass(RewardConfig, args, overrides={
+        "mu_co": mu_co,
+        "mu_co_is_effective": use_effective_mu,
+        "thermo_consistent_backend": not args.disable_thermo_consistent_backend,
+    })
+    constraint_cfg = _fill_dataclass(ConstraintConfig, args)
+    co_cfg = _fill_dataclass(COAdsorptionConfig, args, overrides={
+        "enable_co_adsorption": not args.disable_co_adsorption,
+        "co_use_langmuir_target": not args.disable_co_langmuir_target,
+        "use_relative_mu_co": not args.absolute_mu_co,
+        "e_cu_co": e_cu_co,
+        "e_pd_co": e_pd_co,
+    })
+    uma_cfg = _fill_dataclass(UMAPBRSConfig, args, overrides={
+        "use_uma_pbrs": not args.disable_uma_pbrs,
+        "uma_pbrs_gamma": uma_pbrs_gamma,
+    })
 
     return EnvConfig(
         mode=args.obs_mode,
