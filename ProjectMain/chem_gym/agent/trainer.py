@@ -228,6 +228,8 @@ def train_agent(
                 dict(
                     pirp_scale=train_config.pirp_scale,
                     noop_logit_bonus=train_config.noop_logit_bonus,
+                    has_noop_action=bool(getattr(env_config, "enable_noop_action", True)),
+                    has_stop_action=bool(getattr(env_config, "stop_terminates", False)),
                     pirp_mu_co=env_config.mu_co,
                     pirp_n_elements=len(env_config.element_types),
                     prior_constants=env_config.physics_prior,

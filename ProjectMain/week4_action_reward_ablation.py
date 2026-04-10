@@ -28,6 +28,7 @@ from main import maybe_load_oracle
 PROFILE_CHOICES = {
     "mutation_legacy",
     "mutation_delta_stop",
+    "mutation_delta_strict_stop",
     "mutation_pbrs_stop",
     "swap_delta_stop",
 }
@@ -140,6 +141,25 @@ def build_env_config(profile: str, seed: int, mu_co: float, max_steps: int) -> E
         cfg.constraint_lambda_init = 0.0
         cfg.constraint_lambda_min = 0.0
         cfg.constraint_lambda_max = 0.0
+    elif profile == "mutation_delta_strict_stop":
+        cfg.action_mode = "mutation"
+        cfg.enable_noop_action = False
+        cfg.stop_terminates = True
+        cfg.min_stop_steps = 8
+        cfg.reward.reward_profile = "pure_delta_omega"
+        cfg.reward_profile = "pure_delta_omega"
+        cfg.uma_pbrs.use_uma_pbrs = False
+        cfg.use_uma_pbrs = False
+        cfg.constraint.constraint_update_mode = "frozen"
+        cfg.constraint.constraint_weight = 0.0
+        cfg.constraint.constraint_lambda_init = 0.0
+        cfg.constraint.constraint_lambda_min = 0.0
+        cfg.constraint.constraint_lambda_max = 0.0
+        cfg.constraint_update_mode = "frozen"
+        cfg.constraint_weight = 0.0
+        cfg.constraint_lambda_init = 0.0
+        cfg.constraint_lambda_min = 0.0
+        cfg.constraint_lambda_max = 0.0
     elif profile == "mutation_pbrs_stop":
         cfg.action_mode = "mutation"
         cfg.enable_noop_action = True
@@ -186,6 +206,7 @@ def build_env_config(profile: str, seed: int, mu_co: float, max_steps: int) -> E
 
 def build_train_config(profile: str, total_steps: int, device: str) -> TrainConfig:
     use_pirp = profile.startswith("mutation_")
+    noop_bonus = 0.0 if profile == "mutation_delta_strict_stop" else 0.25
     return TrainConfig(
         total_timesteps=int(total_steps),
         n_envs=1,
@@ -198,7 +219,7 @@ def build_train_config(profile: str, total_steps: int, device: str) -> TrainConf
         ppo_ent_coef=5e-4,
         use_pirp=bool(use_pirp),
         pirp_scale=0.02,
-        noop_logit_bonus=0.25,
+        noop_logit_bonus=noop_bonus,
         enable_visualization=False,
     )
 

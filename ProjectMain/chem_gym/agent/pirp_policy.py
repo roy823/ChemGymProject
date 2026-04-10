@@ -21,6 +21,8 @@ class PIRPMaskableActorCriticPolicy(MaskableActorCriticPolicy):
         *args,
         pirp_scale: float = 1.0,
         noop_logit_bonus: float = 0.0,
+        has_noop_action: bool = True,
+        has_stop_action: bool = False,
         pirp_mu_co: float = -1.0,
         pirp_n_elements: int = 2,
         prior_constants: Optional[Dict[str, float]] = None,
@@ -33,6 +35,8 @@ class PIRPMaskableActorCriticPolicy(MaskableActorCriticPolicy):
 
         self.pirp_scale = float(pirp_scale)
         self.noop_logit_bonus = float(noop_logit_bonus)
+        self.has_noop_action = bool(has_noop_action)
+        self.has_stop_action = bool(has_stop_action)
         self.pirp_mu_co = float(pirp_mu_co)
         self.pirp_n_elements = int(pirp_n_elements)
         self.prior_constants = build_prior_constants(prior_constants)
@@ -43,8 +47,15 @@ class PIRPMaskableActorCriticPolicy(MaskableActorCriticPolicy):
             raise ValueError(
                 "PIRP policy supports action spaces with up to 2 extra actions (noop + stop)."
             )
-        # Noop is the first extra action (if any); stop is the second.
-        self.noop_action_idx = int(self.base_action_dim) if self.extra_action_dim >= 1 else None
+        expected_extra = int(self.has_noop_action) + int(self.has_stop_action)
+        if self.extra_action_dim != expected_extra:
+            raise ValueError(
+                "Mismatch between action-space extra actions and PIRP profile flags: "
+                f"extra_action_dim={self.extra_action_dim}, "
+                f"has_noop_action={self.has_noop_action}, has_stop_action={self.has_stop_action}"
+            )
+        self.noop_action_idx = int(self.base_action_dim) if self.has_noop_action else None
+        self.stop_action_idx = int(self.base_action_dim + int(self.has_noop_action)) if self.has_stop_action else None
         self.n_sites = self.base_action_dim // self.pirp_n_elements
 
         hidden_dim = getattr(self.features_extractor, "hidden_dim", 128)
