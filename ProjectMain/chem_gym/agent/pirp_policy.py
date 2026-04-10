@@ -25,6 +25,7 @@ class PIRPMaskableActorCriticPolicy(MaskableActorCriticPolicy):
         has_stop_action: bool = False,
         pirp_mu_co: float = -1.0,
         pirp_n_elements: int = 2,
+        pirp_n_sites: Optional[int] = None,
         prior_constants: Optional[Dict[str, float]] = None,
         **kwargs,
     ):
@@ -39,13 +40,19 @@ class PIRPMaskableActorCriticPolicy(MaskableActorCriticPolicy):
         self.has_stop_action = bool(has_stop_action)
         self.pirp_mu_co = float(pirp_mu_co)
         self.pirp_n_elements = int(pirp_n_elements)
+        self.pirp_n_sites = None if pirp_n_sites is None else int(pirp_n_sites)
         self.prior_constants = build_prior_constants(prior_constants)
 
-        self.base_action_dim = (self.action_space.n // self.pirp_n_elements) * self.pirp_n_elements
+        if self.pirp_n_sites is not None:
+            self.n_sites = int(self.pirp_n_sites)
+            self.base_action_dim = int(self.n_sites * self.pirp_n_elements)
+        else:
+            self.base_action_dim = (self.action_space.n // self.pirp_n_elements) * self.pirp_n_elements
+            self.n_sites = self.base_action_dim // self.pirp_n_elements
         self.extra_action_dim = int(self.action_space.n - self.base_action_dim)
-        if self.extra_action_dim not in {0, 1, 2}:
+        if self.base_action_dim <= 0 or self.extra_action_dim not in {0, 1, 2}:
             raise ValueError(
-                "PIRP policy supports action spaces with up to 2 extra actions (noop + stop)."
+                "PIRP policy expects a valid mutation base action layout with up to 2 extra actions."
             )
         expected_extra = int(self.has_noop_action) + int(self.has_stop_action)
         if self.extra_action_dim != expected_extra:
@@ -56,7 +63,6 @@ class PIRPMaskableActorCriticPolicy(MaskableActorCriticPolicy):
             )
         self.noop_action_idx = int(self.base_action_dim) if self.has_noop_action else None
         self.stop_action_idx = int(self.base_action_dim + int(self.has_noop_action)) if self.has_stop_action else None
-        self.n_sites = self.base_action_dim // self.pirp_n_elements
 
         hidden_dim = getattr(self.features_extractor, "hidden_dim", 128)
         gate_hidden = max(16, hidden_dim // 2)

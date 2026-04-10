@@ -232,6 +232,7 @@ def train_agent(
                     has_stop_action=bool(getattr(env_config, "stop_terminates", False)),
                     pirp_mu_co=env_config.mu_co,
                     pirp_n_elements=len(env_config.element_types),
+                    pirp_n_sites=int(env_config.slab_size[0] * env_config.slab_size[1] * env_config.n_active_layers),
                     prior_constants=env_config.physics_prior,
                 )
             )
