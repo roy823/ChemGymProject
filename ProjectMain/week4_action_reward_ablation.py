@@ -270,6 +270,38 @@ def write_csv(path: Path, rows: Sequence[Dict]) -> None:
         writer.writerows(rows)
 
 
+def load_saved_model(
+    profile: str,
+    run_dir: Path,
+    oracle,
+    mu_co: float,
+    seed: int,
+    eval_steps: int,
+):
+    model_path = run_dir / "latest_model"
+    stats_path = run_dir / "latest_vec_normalize.pkl"
+    if not model_path.with_suffix(".zip").exists():
+        raise FileNotFoundError(f"Missing model file: {model_path.with_suffix('.zip')}")
+    if not stats_path.exists():
+        raise FileNotFoundError(f"Missing vec normalize file: {stats_path}")
+
+    env_cfg = build_env_config(
+        profile=profile,
+        seed=int(seed),
+        mu_co=float(mu_co),
+        max_steps=max(int(eval_steps) + 24, 128),
+    )
+
+    def _make_single():
+        return ChemGymEnv(env_cfg, oracle=oracle)
+
+    base_venv = DummyVecEnv([_make_single])
+    venv = VecNormalize.load(str(stats_path), base_venv)
+    venv.training = False
+    venv.norm_reward = False
+    return MaskablePPO.load(str(model_path), env=venv)
+
+
 def standard_eval_saved_model(
     profile: str,
     run_dir: Path,
@@ -370,6 +402,82 @@ def aggregate_standard_eval(rows: Sequence[Dict[str, float]]) -> Dict[str, float
     }
 
 
+def write_markdown_summary(
+    path: Path,
+    mu_co: float,
+    train_steps: int,
+    eval_steps: int,
+    standard_eval_steps: int,
+    summary_rows: Sequence[Dict],
+    standard_profile_rows: Sequence[Dict],
+    standard_eval_train_rows: Sequence[Dict],
+) -> None:
+    lines: List[str] = []
+    lines.append(f"## Week 4 Closed-Loop Summary at mu_CO = {float(mu_co):.3f} eV")
+    lines.append("")
+    lines.append("Protocol:")
+    lines.append(f"- Train steps per run: {int(train_steps)}")
+    lines.append(f"- Short eval steps after train: {int(eval_steps)}")
+    lines.append(f"- Standard eval steps per seed: {int(standard_eval_steps)}")
+    lines.append("")
+
+    if standard_profile_rows:
+        lines.append("### Standardized profile ranking")
+        lines.append("")
+        lines.append("| Profile | mean(best_omega) | best_omega_global | mean(theta_Pd) | mean(N_CO) | mean(noop_ratio) | mean(omega_spearman) |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+        for row in standard_profile_rows:
+            lines.append(
+                "| "
+                f"{row['profile']} | "
+                f"{row['mean_best_omega']:.6f} | "
+                f"{row['best_omega_global']:.6f} | "
+                f"{row['mean_best_theta_pd']:.6f} | "
+                f"{row['mean_best_n_co']:.6f} | "
+                f"{row['mean_noop_ratio']:.6f} | "
+                f"{row['mean_omega_spearman']:.6f} |"
+            )
+        lines.append("")
+
+    if standard_eval_train_rows:
+        lines.append("### Per train-seed standardized evaluation")
+        lines.append("")
+        lines.append("| Profile | train_seed | mean(best_omega) | best_omega_global | mean(theta_Pd) | mean(N_CO) | mean(noop_ratio) |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+        for row in standard_eval_train_rows:
+            lines.append(
+                "| "
+                f"{row['profile']} | "
+                f"{int(row['train_seed'])} | "
+                f"{row['mean_best_omega']:.6f} | "
+                f"{row['best_omega_global']:.6f} | "
+                f"{row['mean_best_theta_pd']:.6f} | "
+                f"{row['mean_best_n_co']:.6f} | "
+                f"{row['mean_noop_ratio']:.6f} |"
+            )
+        lines.append("")
+
+    if summary_rows:
+        lines.append("### Short post-train evaluation")
+        lines.append("")
+        lines.append("| Profile | mean(best_omega) | mean(final_omega) | mean(theta_Pd) | mean(N_CO) | mean(stop_ratio) |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+        for row in summary_rows:
+            lines.append(
+                "| "
+                f"{row['profile']} | "
+                f"{row['mean_best_omega']:.6f} | "
+                f"{row['mean_final_omega']:.6f} | "
+                f"{row['mean_best_theta_pd']:.6f} | "
+                f"{row['mean_best_n_co']:.6f} | "
+                f"{row['mean_stop_ratio']:.6f} |"
+            )
+        lines.append("")
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Week-4 action/reward ablation runner")
     parser.add_argument(
@@ -385,6 +493,8 @@ def main() -> None:
     parser.add_argument("--standard-eval-seeds", type=str, default="11,22,33")
     parser.add_argument("--standard-eval-steps", type=int, default=60)
     parser.add_argument("--disable-standard-eval", action="store_true")
+    parser.add_argument("--skip-existing", action="store_true")
+    parser.add_argument("--write-summary-md", action="store_true")
     parser.add_argument("--save-root", type=str, default="ProjectMain/checkpoints/week4_action_reward_ablation")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--oracle-mode", choices=["hybrid", "none"], default="hybrid")
@@ -434,15 +544,27 @@ def main() -> None:
                 f"[Run] profile={profile} seed={seed} action_mode={env_cfg.action_mode} "
                 f"reward_profile={env_cfg.reward_profile} stop={env_cfg.stop_terminates}"
             )
-            model = train_agent(
-                env_config=env_cfg,
-                surrogate=None,
-                train_config=train_cfg,
-                oracle_energy_fn=oracle.compute_energy if hasattr(oracle, "compute_energy") else None,
-                oracle=oracle,
-                save_dir=str(case_dir),
-                use_masking=True,
-            )
+            has_saved_model = (case_dir / "latest_model.zip").exists() and (case_dir / "latest_vec_normalize.pkl").exists()
+            if bool(args.skip_existing) and has_saved_model:
+                print(f"[SkipExisting] Reusing saved model for profile={profile} seed={seed}")
+                model = load_saved_model(
+                    profile=profile,
+                    run_dir=case_dir,
+                    oracle=oracle,
+                    mu_co=float(args.mu_co),
+                    seed=int(seed),
+                    eval_steps=int(args.eval_steps),
+                )
+            else:
+                model = train_agent(
+                    env_config=env_cfg,
+                    surrogate=None,
+                    train_config=train_cfg,
+                    oracle_energy_fn=oracle.compute_energy if hasattr(oracle, "compute_energy") else None,
+                    oracle=oracle,
+                    save_dir=str(case_dir),
+                    use_masking=True,
+                )
             metrics = eval_model(model, eval_steps=int(args.eval_steps))
             row = {
                 "profile": profile,
@@ -529,6 +651,17 @@ def main() -> None:
 
         standard_profile_rows.sort(key=lambda r: (r["mean_best_omega"], r["best_omega_global"]))
         write_csv(save_root / "standard_eval_profile_summary.csv", standard_profile_rows)
+        if bool(args.write_summary_md):
+            write_markdown_summary(
+                path=save_root / "RESULT_SUMMARY.md",
+                mu_co=float(args.mu_co),
+                train_steps=int(args.train_steps),
+                eval_steps=int(args.eval_steps),
+                standard_eval_steps=int(args.standard_eval_steps),
+                summary_rows=summary_rows,
+                standard_profile_rows=standard_profile_rows,
+                standard_eval_train_rows=standard_eval_train_rows,
+            )
 
     print("[Done] Saved metrics:")
     print(save_root / "per_seed_metrics.csv")
@@ -537,6 +670,8 @@ def main() -> None:
         print(save_root / "standard_eval_per_seed.csv")
         print(save_root / "standard_eval_by_train_seed.csv")
         print(save_root / "standard_eval_profile_summary.csv")
+        if bool(args.write_summary_md):
+            print(save_root / "RESULT_SUMMARY.md")
 
 
 if __name__ == "__main__":
