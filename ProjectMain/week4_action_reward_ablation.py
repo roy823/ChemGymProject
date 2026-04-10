@@ -270,6 +270,105 @@ def write_csv(path: Path, rows: Sequence[Dict]) -> None:
         writer.writerows(rows)
 
 
+def read_csv_rows(path: Path) -> List[Dict[str, str]]:
+    if not path.exists():
+        return []
+    with path.open("r", newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def _maybe_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _maybe_int(value):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return value
+    if np.isfinite(parsed) and abs(parsed - round(parsed)) <= 1e-9:
+        return int(round(parsed))
+    return parsed
+
+
+def convert_case_row(row: Dict[str, str]) -> Dict:
+    converted = dict(row)
+    for key in ("profile", "action_mode", "reward_profile"):
+        if key in converted:
+            converted[key] = str(converted[key])
+    for key in ("stop_terminates",):
+        if key in converted:
+            converted[key] = str(converted[key]).strip().lower() == "true"
+    for key in ("seed", "best_n_co", "final_n_co"):
+        if key in converted:
+            converted[key] = _maybe_int(converted[key])
+    if "mu_co" in converted:
+        converted["mu_co"] = _maybe_float(converted["mu_co"])
+    for key in (
+        "best_omega",
+        "best_theta_pd",
+        "final_omega",
+        "final_theta_pd",
+        "stop_ratio",
+        "mean_eval_omega",
+        "mean_eval_reward",
+    ):
+        if key in converted:
+            converted[key] = _maybe_float(converted[key])
+    return converted
+
+
+def convert_standard_seed_row(row: Dict[str, str]) -> Dict:
+    converted = dict(row)
+    for key in ("profile",):
+        if key in converted:
+            converted[key] = str(converted[key])
+    for key in ("train_seed", "eval_seed", "best_n_co"):
+        if key in converted:
+            converted[key] = _maybe_int(converted[key])
+    if "mu_co" in converted:
+        converted["mu_co"] = _maybe_float(converted["mu_co"])
+    for key in (
+        "best_omega",
+        "best_theta_pd",
+        "omega_spearman",
+        "dfrac_autocorr_lag2",
+        "noop_ratio",
+        "lambda_last",
+    ):
+        if key in converted:
+            converted[key] = _maybe_float(converted[key])
+    return converted
+
+
+def convert_standard_train_row(row: Dict[str, str]) -> Dict:
+    converted = dict(row)
+    for key in ("profile",):
+        if key in converted:
+            converted[key] = str(converted[key])
+    for key in ("train_seed",):
+        if key in converted:
+            converted[key] = _maybe_int(converted[key])
+    if "mu_co" in converted:
+        converted["mu_co"] = _maybe_float(converted["mu_co"])
+    for key in (
+        "mean_best_omega",
+        "best_omega_global",
+        "mean_best_theta_pd",
+        "mean_best_n_co",
+        "mean_omega_spearman",
+        "mean_dfrac_autocorr_lag2",
+        "mean_noop_ratio",
+        "mean_lambda_last",
+    ):
+        if key in converted:
+            converted[key] = _maybe_float(converted[key])
+    return converted
+
+
 def load_saved_model(
     profile: str,
     run_dir: Path,
@@ -478,6 +577,24 @@ def write_markdown_summary(
     path.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
 
 
+def collect_case_artifacts(save_root: Path, profiles: Sequence[str]) -> tuple[List[Dict], List[Dict], List[Dict]]:
+    case_rows: List[Dict] = []
+    standard_seed_rows: List[Dict] = []
+    standard_train_rows: List[Dict] = []
+    for profile in profiles:
+        profile_dir = save_root / profile
+        if not profile_dir.exists():
+            continue
+        for seed_dir in sorted(p for p in profile_dir.iterdir() if p.is_dir()):
+            case_csv = seed_dir / "case_metrics.csv"
+            standard_seed_csv = seed_dir / "standard_eval_per_seed.csv"
+            standard_train_csv = seed_dir / "standard_eval_summary.csv"
+            case_rows.extend(convert_case_row(row) for row in read_csv_rows(case_csv))
+            standard_seed_rows.extend(convert_standard_seed_row(row) for row in read_csv_rows(standard_seed_csv))
+            standard_train_rows.extend(convert_standard_train_row(row) for row in read_csv_rows(standard_train_csv))
+    return case_rows, standard_seed_rows, standard_train_rows
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Week-4 action/reward ablation runner")
     parser.add_argument(
@@ -494,6 +611,7 @@ def main() -> None:
     parser.add_argument("--standard-eval-steps", type=int, default=60)
     parser.add_argument("--disable-standard-eval", action="store_true")
     parser.add_argument("--skip-existing", action="store_true")
+    parser.add_argument("--aggregate-only", action="store_true")
     parser.add_argument("--write-summary-md", action="store_true")
     parser.add_argument("--save-root", type=str, default="ProjectMain/checkpoints/week4_action_reward_ablation")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
@@ -525,87 +643,87 @@ def main() -> None:
     oracle = build_oracle(args)
     standard_eval_seeds = parse_int_list(args.standard_eval_seeds)
 
-    rows: List[Dict] = []
-    standard_eval_rows: List[Dict] = []
-    standard_eval_train_rows: List[Dict] = []
-    for profile in profiles:
-        for seed in seeds:
-            env_cfg = build_env_config(
-                profile=profile,
-                seed=int(seed),
-                mu_co=float(args.mu_co),
-                max_steps=max(int(args.eval_steps) + 24, 128),
-            )
-            train_cfg = build_train_config(profile=profile, total_steps=int(args.train_steps), device=str(args.device))
-            case_dir = save_root / profile / f"seed_{seed}"
-            case_dir.mkdir(parents=True, exist_ok=True)
-
-            print(
-                f"[Run] profile={profile} seed={seed} action_mode={env_cfg.action_mode} "
-                f"reward_profile={env_cfg.reward_profile} stop={env_cfg.stop_terminates}"
-            )
-            has_saved_model = (case_dir / "latest_model.zip").exists() and (case_dir / "latest_vec_normalize.pkl").exists()
-            if bool(args.skip_existing) and has_saved_model:
-                print(f"[SkipExisting] Reusing saved model for profile={profile} seed={seed}")
-                model = load_saved_model(
+    if not bool(args.aggregate_only):
+        for profile in profiles:
+            for seed in seeds:
+                env_cfg = build_env_config(
                     profile=profile,
-                    run_dir=case_dir,
-                    oracle=oracle,
-                    mu_co=float(args.mu_co),
                     seed=int(seed),
-                    eval_steps=int(args.eval_steps),
-                )
-            else:
-                model = train_agent(
-                    env_config=env_cfg,
-                    surrogate=None,
-                    train_config=train_cfg,
-                    oracle_energy_fn=oracle.compute_energy if hasattr(oracle, "compute_energy") else None,
-                    oracle=oracle,
-                    save_dir=str(case_dir),
-                    use_masking=True,
-                )
-            metrics = eval_model(model, eval_steps=int(args.eval_steps))
-            row = {
-                "profile": profile,
-                "seed": int(seed),
-                "mu_co": float(args.mu_co),
-                "action_mode": env_cfg.action_mode,
-                "reward_profile": env_cfg.reward_profile,
-                "stop_terminates": bool(env_cfg.stop_terminates),
-                **metrics,
-            }
-            rows.append(row)
-            print(row)
-
-            if not bool(args.disable_standard_eval):
-                eval_rows = standard_eval_saved_model(
-                    profile=profile,
-                    run_dir=case_dir,
-                    oracle=oracle,
                     mu_co=float(args.mu_co),
-                    eval_seeds=standard_eval_seeds,
-                    eval_steps=int(args.standard_eval_steps),
+                    max_steps=max(int(args.eval_steps) + 24, 128),
                 )
-                for eval_row in eval_rows:
-                    standard_eval_rows.append(
-                        {
-                            "profile": profile,
-                            "train_seed": int(seed),
-                            "mu_co": float(args.mu_co),
-                            **eval_row,
-                        }
+                train_cfg = build_train_config(profile=profile, total_steps=int(args.train_steps), device=str(args.device))
+                case_dir = save_root / profile / f"seed_{seed}"
+                case_dir.mkdir(parents=True, exist_ok=True)
+
+                print(
+                    f"[Run] profile={profile} seed={seed} action_mode={env_cfg.action_mode} "
+                    f"reward_profile={env_cfg.reward_profile} stop={env_cfg.stop_terminates}"
+                )
+                has_saved_model = (case_dir / "latest_model.zip").exists() and (case_dir / "latest_vec_normalize.pkl").exists()
+                if bool(args.skip_existing) and has_saved_model:
+                    print(f"[SkipExisting] Reusing saved model for profile={profile} seed={seed}")
+                    model = load_saved_model(
+                        profile=profile,
+                        run_dir=case_dir,
+                        oracle=oracle,
+                        mu_co=float(args.mu_co),
+                        seed=int(seed),
+                        eval_steps=int(args.eval_steps),
                     )
-                summary = aggregate_standard_eval(eval_rows)
-                standard_eval_train_rows.append(
-                    {
+                else:
+                    model = train_agent(
+                        env_config=env_cfg,
+                        surrogate=None,
+                        train_config=train_cfg,
+                        oracle_energy_fn=oracle.compute_energy if hasattr(oracle, "compute_energy") else None,
+                        oracle=oracle,
+                        save_dir=str(case_dir),
+                        use_masking=True,
+                    )
+                metrics = eval_model(model, eval_steps=int(args.eval_steps))
+                row = {
+                    "profile": profile,
+                    "seed": int(seed),
+                    "mu_co": float(args.mu_co),
+                    "action_mode": env_cfg.action_mode,
+                    "reward_profile": env_cfg.reward_profile,
+                    "stop_terminates": bool(env_cfg.stop_terminates),
+                    **metrics,
+                }
+                write_csv(case_dir / "case_metrics.csv", [row])
+                print(row)
+
+                if not bool(args.disable_standard_eval):
+                    eval_rows = standard_eval_saved_model(
+                        profile=profile,
+                        run_dir=case_dir,
+                        oracle=oracle,
+                        mu_co=float(args.mu_co),
+                        eval_seeds=standard_eval_seeds,
+                        eval_steps=int(args.standard_eval_steps),
+                    )
+                    persisted_eval_rows: List[Dict] = []
+                    for eval_row in eval_rows:
+                        persisted_eval_rows.append(
+                            {
+                                "profile": profile,
+                                "train_seed": int(seed),
+                                "mu_co": float(args.mu_co),
+                                **eval_row,
+                            }
+                        )
+                    write_csv(case_dir / "standard_eval_per_seed.csv", persisted_eval_rows)
+                    summary = {
                         "profile": profile,
                         "train_seed": int(seed),
                         "mu_co": float(args.mu_co),
-                        **summary,
+                        **aggregate_standard_eval(eval_rows),
                     }
-                )
-                print(f"[StandardEval] profile={profile} train_seed={seed} summary={summary}")
+                    write_csv(case_dir / "standard_eval_summary.csv", [summary])
+                    print(f"[StandardEval] profile={profile} train_seed={seed} summary={summary}")
+
+    rows, standard_eval_rows, standard_eval_train_rows = collect_case_artifacts(save_root=save_root, profiles=profiles)
 
     write_csv(save_root / "per_seed_metrics.csv", rows)
 
