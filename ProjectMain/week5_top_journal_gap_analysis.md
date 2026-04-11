@@ -65,17 +65,25 @@ New fixed-composition control:
 
 - A fair `swap_delta_strict_stop` baseline was added so that fixed-composition local search uses the same strict-stop protocol as the mutation mainline instead of carrying an extra noop path.
 - At `mu_CO = -0.2 eV`, the completed fixed-composition train seeds currently give
-  `mean_best_omega = -323.25 eV` for `seed_11`
-  and `-323.27 eV` for `seed_22`
+  `mean_best_omega = -323.25 eV` for `seed_11`,
+  `-323.27 eV` for `seed_22`,
+  and `-323.25 eV` for `seed_33`,
   from
   `checkpoints/week5_swapctrl_m02_strictstop_2k_s3/swap_delta_strict_stop/seed_11/standard_eval_summary.csv`
   and
-  `checkpoints/week5_swapctrl_m02_strictstop_2k_s3/swap_delta_strict_stop/seed_22/standard_eval_summary.csv`.
+  `checkpoints/week5_swapctrl_m02_strictstop_2k_s3/swap_delta_strict_stop/seed_22/standard_eval_summary.csv`
+  and
+  `checkpoints/week5_swapctrl_m02_strictstop_2k_s3/swap_delta_strict_stop/seed_33/standard_eval_summary.csv`.
+- The current 3-seed fixed-composition summary is
+  `mean_best_omega = -323.2575 eV`
+  with `mean_constraint_valid_frac = 1.0`
+  from `checkpoints/week5_swapctrl_m02_strictstop_2k_s3/standard_eval_profile_summary.csv`.
 - The matched open-composition mainline at the same budget gave
   `mean_best_omega = -345.01 eV` for `seed_11`
   and `-346.39 eV` for `seed_22`
   from `checkpoints/week5_longrun_m02_strictstop_2k_s2/standard_eval_by_train_seed.csv`.
 - Over the matched completed seeds, the mutation mainline is better by about `22.44 eV` in `mean_best_omega`.
+- Over the currently available root summaries, the open-composition mean remains better by about `22.45 eV`.
 
 Interpretation:
 
