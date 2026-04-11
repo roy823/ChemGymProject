@@ -323,6 +323,10 @@ def eval_model(model, eval_steps: int) -> Dict[str, float]:
     best_omega = float("inf")
     best_theta = float("nan")
     best_nco = -1
+    best_omega_violation = float("nan")
+    feasible_best_omega = float("inf")
+    feasible_best_theta = float("nan")
+    feasible_best_nco = -1
     final_omega = float("nan")
     final_theta = float("nan")
     final_nco = -1
@@ -352,6 +356,11 @@ def eval_model(model, eval_steps: int) -> Dict[str, float]:
                 best_omega = omega
                 best_theta = theta
                 best_nco = nco
+                best_omega_violation = violation
+            if np.isfinite(violation) and violation <= 1e-12 and omega < feasible_best_omega:
+                feasible_best_omega = omega
+                feasible_best_theta = theta
+                feasible_best_nco = nco
         if np.isfinite(reward_raw):
             reward_trace.append(reward_raw)
         if np.isfinite(violation):
@@ -374,6 +383,15 @@ def eval_model(model, eval_steps: int) -> Dict[str, float]:
         "best_omega": float(best_omega),
         "best_theta_pd": float(best_theta),
         "best_n_co": int(best_nco),
+        "best_omega_is_feasible": float(np.isfinite(best_omega_violation) and best_omega_violation <= 1e-12),
+        "feasible_best_omega": float(feasible_best_omega) if np.isfinite(feasible_best_omega) else float("nan"),
+        "feasible_best_theta_pd": float(feasible_best_theta),
+        "feasible_best_n_co": int(feasible_best_nco),
+        "best_omega_feasibility_gap": (
+            float(feasible_best_omega - best_omega)
+            if np.isfinite(best_omega) and np.isfinite(feasible_best_omega)
+            else float("nan")
+        ),
         "final_omega": float(final_omega),
         "final_theta_pd": float(final_theta),
         "final_n_co": int(final_nco),
@@ -432,7 +450,7 @@ def convert_case_row(row: Dict[str, str]) -> Dict:
     for key in ("stop_terminates",):
         if key in converted:
             converted[key] = str(converted[key]).strip().lower() == "true"
-    for key in ("seed", "best_n_co", "final_n_co"):
+    for key in ("seed", "best_n_co", "feasible_best_n_co", "final_n_co"):
         if key in converted:
             converted[key] = _maybe_int(converted[key])
     if "mu_co" in converted:
@@ -440,6 +458,10 @@ def convert_case_row(row: Dict[str, str]) -> Dict:
     for key in (
         "best_omega",
         "best_theta_pd",
+        "best_omega_is_feasible",
+        "feasible_best_omega",
+        "feasible_best_theta_pd",
+        "best_omega_feasibility_gap",
         "final_omega",
         "final_theta_pd",
         "stop_ratio",
@@ -463,7 +485,7 @@ def convert_standard_seed_row(row: Dict[str, str]) -> Dict:
     for key in ("profile",):
         if key in converted:
             converted[key] = str(converted[key])
-    for key in ("train_seed", "eval_seed", "best_n_co"):
+    for key in ("train_seed", "eval_seed", "best_n_co", "feasible_best_n_co"):
         if key in converted:
             converted[key] = _maybe_int(converted[key])
     if "mu_co" in converted:
@@ -471,6 +493,10 @@ def convert_standard_seed_row(row: Dict[str, str]) -> Dict:
     for key in (
         "best_omega",
         "best_theta_pd",
+        "best_omega_is_feasible",
+        "feasible_best_omega",
+        "feasible_best_theta_pd",
+        "best_omega_feasibility_gap",
         "omega_spearman",
         "dfrac_autocorr_lag2",
         "noop_ratio",
@@ -501,8 +527,14 @@ def convert_standard_train_row(row: Dict[str, str]) -> Dict:
     for key in (
         "mean_best_omega",
         "best_omega_global",
+        "mean_best_omega_is_feasible",
+        "mean_feasible_best_omega",
+        "feasible_best_omega_global",
+        "mean_best_omega_feasibility_gap",
         "mean_best_theta_pd",
         "mean_best_n_co",
+        "mean_feasible_best_theta_pd",
+        "mean_feasible_best_n_co",
         "mean_omega_spearman",
         "mean_dfrac_autocorr_lag2",
         "mean_noop_ratio",
@@ -594,6 +626,10 @@ def standard_eval_saved_model(
         best_omega = float("inf")
         best_theta = float("nan")
         best_nco = -1
+        best_omega_violation = float("nan")
+        feasible_best_omega = float("inf")
+        feasible_best_theta = float("nan")
+        feasible_best_nco = -1
         last_lambda = float("nan")
         violation_trace: List[float] = []
         uncertainty_trace: List[float] = []
@@ -623,6 +659,11 @@ def standard_eval_saved_model(
                     best_omega = omega
                     best_theta = theta
                     best_nco = nco
+                    best_omega_violation = violation
+                if np.isfinite(violation) and violation <= 1e-12 and omega < feasible_best_omega:
+                    feasible_best_omega = omega
+                    feasible_best_theta = theta
+                    feasible_best_nco = nco
             if np.isfinite(d_frac):
                 dfrac_trace.append(d_frac)
             if np.isfinite(violation):
@@ -643,6 +684,15 @@ def standard_eval_saved_model(
                 "best_omega": float(best_omega),
                 "best_theta_pd": float(best_theta),
                 "best_n_co": int(best_nco),
+                "best_omega_is_feasible": float(np.isfinite(best_omega_violation) and best_omega_violation <= 1e-12),
+                "feasible_best_omega": float(feasible_best_omega) if np.isfinite(feasible_best_omega) else float("nan"),
+                "feasible_best_theta_pd": float(feasible_best_theta),
+                "feasible_best_n_co": int(feasible_best_nco),
+                "best_omega_feasibility_gap": (
+                    float(feasible_best_omega - best_omega)
+                    if np.isfinite(best_omega) and np.isfinite(feasible_best_omega)
+                    else float("nan")
+                ),
                 "omega_spearman": float(spearman_corr(omega_trace)),
                 "dfrac_autocorr_lag2": float(autocorr_lag(dfrac_trace, lag=2)),
                 "noop_ratio": float(stop_steps / max(1, int(eval_steps))),
@@ -664,8 +714,14 @@ def aggregate_standard_eval(rows: Sequence[Dict[str, float]]) -> Dict[str, float
     return {
         "mean_best_omega": float(np.nanmean([r["best_omega"] for r in rows])),
         "best_omega_global": float(np.nanmin([r["best_omega"] for r in rows])),
+        "mean_best_omega_is_feasible": float(np.nanmean([r["best_omega_is_feasible"] for r in rows])),
+        "mean_feasible_best_omega": float(np.nanmean([r["feasible_best_omega"] for r in rows])),
+        "feasible_best_omega_global": float(np.nanmin([r["feasible_best_omega"] for r in rows])),
+        "mean_best_omega_feasibility_gap": float(np.nanmean([r["best_omega_feasibility_gap"] for r in rows])),
         "mean_best_theta_pd": float(np.nanmean([r["best_theta_pd"] for r in rows])),
         "mean_best_n_co": float(np.nanmean([r["best_n_co"] for r in rows])),
+        "mean_feasible_best_theta_pd": float(np.nanmean([r["feasible_best_theta_pd"] for r in rows])),
+        "mean_feasible_best_n_co": float(np.nanmean([r["feasible_best_n_co"] for r in rows])),
         "mean_omega_spearman": float(np.nanmean([r["omega_spearman"] for r in rows])),
         "mean_dfrac_autocorr_lag2": float(np.nanmean([r["dfrac_autocorr_lag2"] for r in rows])),
         "mean_noop_ratio": float(np.nanmean([r["noop_ratio"] for r in rows])),
@@ -702,14 +758,16 @@ def write_markdown_summary(
     if standard_profile_rows:
         lines.append("### Standardized profile ranking")
         lines.append("")
-        lines.append("| Profile | mean(best_omega) | best_omega_global | mean(theta_Pd) | mean(N_CO) | mean(noop_ratio) | mean(active_ratio) | mean(valid_frac) |")
-        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        lines.append("| Profile | mean(best_omega) | mean(feasible_best_omega) | best_omega_global | feasible_best_omega_global | mean(theta_Pd) | mean(N_CO) | mean(noop_ratio) | mean(active_ratio) | mean(valid_frac) |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         for row in standard_profile_rows:
             lines.append(
                 "| "
                 f"{row['profile']} | "
                 f"{row['mean_best_omega']:.6f} | "
+                f"{row['mean_feasible_best_omega']:.6f} | "
                 f"{row['best_omega_global']:.6f} | "
+                f"{row['feasible_best_omega_global']:.6f} | "
                 f"{row['mean_best_theta_pd']:.6f} | "
                 f"{row['mean_best_n_co']:.6f} | "
                 f"{row['mean_noop_ratio']:.6f} | "
@@ -737,15 +795,17 @@ def write_markdown_summary(
     if standard_eval_train_rows:
         lines.append("### Per train-seed standardized evaluation")
         lines.append("")
-        lines.append("| Profile | train_seed | mean(best_omega) | best_omega_global | mean(theta_Pd) | mean(N_CO) | mean(noop_ratio) | mean(valid_frac) |")
-        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        lines.append("| Profile | train_seed | mean(best_omega) | mean(feasible_best_omega) | best_omega_global | feasible_best_omega_global | mean(theta_Pd) | mean(N_CO) | mean(noop_ratio) | mean(valid_frac) |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         for row in standard_eval_train_rows:
             lines.append(
                 "| "
                 f"{row['profile']} | "
                 f"{int(row['train_seed'])} | "
                 f"{row['mean_best_omega']:.6f} | "
+                f"{row['mean_feasible_best_omega']:.6f} | "
                 f"{row['best_omega_global']:.6f} | "
+                f"{row['feasible_best_omega_global']:.6f} | "
                 f"{row['mean_best_theta_pd']:.6f} | "
                 f"{row['mean_best_n_co']:.6f} | "
                 f"{row['mean_noop_ratio']:.6f} | "
@@ -809,6 +869,7 @@ def main() -> None:
     parser.add_argument("--standard-eval-steps", type=int, default=60)
     parser.add_argument("--disable-standard-eval", action="store_true")
     parser.add_argument("--skip-existing", action="store_true")
+    parser.add_argument("--evaluate-existing-only", action="store_true")
     parser.add_argument("--aggregate-only", action="store_true")
     parser.add_argument("--write-summary-md", action="store_true")
     parser.add_argument("--save-root", type=str, default="ProjectMain/checkpoints/week4_action_reward_ablation")
@@ -859,7 +920,20 @@ def main() -> None:
                     f"reward_profile={env_cfg.reward_profile} stop={env_cfg.stop_terminates}"
                 )
                 has_saved_model = (case_dir / "latest_model.zip").exists() and (case_dir / "latest_vec_normalize.pkl").exists()
-                if bool(args.skip_existing) and has_saved_model:
+                if bool(args.evaluate_existing_only):
+                    if not has_saved_model:
+                        print(f"[SkipMissingModel] No saved model for profile={profile} seed={seed} at {case_dir}")
+                        continue
+                    print(f"[EvalExistingOnly] Reusing saved model for profile={profile} seed={seed}")
+                    model = load_saved_model(
+                        profile=profile,
+                        run_dir=case_dir,
+                        oracle=oracle,
+                        mu_co=float(args.mu_co),
+                        seed=int(seed),
+                        eval_steps=int(args.eval_steps),
+                    )
+                elif bool(args.skip_existing) and has_saved_model:
                     print(f"[SkipExisting] Reusing saved model for profile={profile} seed={seed}")
                     model = load_saved_model(
                         profile=profile,
@@ -934,8 +1008,13 @@ def main() -> None:
             {
                 "profile": profile,
                 "mean_best_omega": float(np.nanmean([r["best_omega"] for r in sub])),
+                "mean_feasible_best_omega": float(np.nanmean([r["feasible_best_omega"] for r in sub])),
+                "mean_best_omega_is_feasible": float(np.nanmean([r["best_omega_is_feasible"] for r in sub])),
+                "mean_best_omega_feasibility_gap": float(np.nanmean([r["best_omega_feasibility_gap"] for r in sub])),
                 "mean_best_theta_pd": float(np.nanmean([r["best_theta_pd"] for r in sub])),
                 "mean_best_n_co": float(np.nanmean([r["best_n_co"] for r in sub])),
+                "mean_feasible_best_theta_pd": float(np.nanmean([r["feasible_best_theta_pd"] for r in sub])),
+                "mean_feasible_best_n_co": float(np.nanmean([r["feasible_best_n_co"] for r in sub])),
                 "mean_final_omega": float(np.nanmean([r["final_omega"] for r in sub])),
                 "mean_stop_ratio": float(np.nanmean([r["stop_ratio"] for r in sub])),
                 "mean_mutation_ratio": float(np.nanmean([r["mutation_ratio"] for r in sub])),
@@ -964,8 +1043,14 @@ def main() -> None:
                     "profile": profile,
                     "mean_best_omega": float(np.nanmean([r["mean_best_omega"] for r in sub])),
                     "best_omega_global": float(np.nanmin([r["best_omega_global"] for r in sub])),
+                    "mean_best_omega_is_feasible": float(np.nanmean([r["mean_best_omega_is_feasible"] for r in sub])),
+                    "mean_feasible_best_omega": float(np.nanmean([r["mean_feasible_best_omega"] for r in sub])),
+                    "feasible_best_omega_global": float(np.nanmin([r["feasible_best_omega_global"] for r in sub])),
+                    "mean_best_omega_feasibility_gap": float(np.nanmean([r["mean_best_omega_feasibility_gap"] for r in sub])),
                     "mean_best_theta_pd": float(np.nanmean([r["mean_best_theta_pd"] for r in sub])),
                     "mean_best_n_co": float(np.nanmean([r["mean_best_n_co"] for r in sub])),
+                    "mean_feasible_best_theta_pd": float(np.nanmean([r["mean_feasible_best_theta_pd"] for r in sub])),
+                    "mean_feasible_best_n_co": float(np.nanmean([r["mean_feasible_best_n_co"] for r in sub])),
                     "mean_omega_spearman": float(np.nanmean([r["mean_omega_spearman"] for r in sub])),
                     "mean_dfrac_autocorr_lag2": float(np.nanmean([r["mean_dfrac_autocorr_lag2"] for r in sub])),
                     "mean_noop_ratio": float(np.nanmean([r["mean_noop_ratio"] for r in sub])),

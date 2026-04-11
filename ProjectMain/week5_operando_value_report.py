@@ -139,8 +139,14 @@ def collect_train_rows(group: ExperimentGroup) -> List[Dict]:
                 "train_seed": train_seed,
                 "mean_best_omega": to_float(row.get("mean_best_omega")),
                 "best_omega_global": to_float(row.get("best_omega_global")),
+                "mean_best_omega_is_feasible": to_float(row.get("mean_best_omega_is_feasible")),
+                "mean_feasible_best_omega": to_float(row.get("mean_feasible_best_omega")),
+                "feasible_best_omega_global": to_float(row.get("feasible_best_omega_global")),
+                "mean_best_omega_feasibility_gap": to_float(row.get("mean_best_omega_feasibility_gap")),
                 "mean_best_theta_pd": to_float(row.get("mean_best_theta_pd")),
                 "mean_best_n_co": to_float(row.get("mean_best_n_co")),
+                "mean_feasible_best_theta_pd": to_float(row.get("mean_feasible_best_theta_pd")),
+                "mean_feasible_best_n_co": to_float(row.get("mean_feasible_best_n_co")),
                 "mean_noop_ratio": to_float(row.get("mean_noop_ratio")),
                 "mean_mutation_ratio": to_float(row.get("mean_mutation_ratio")),
                 "mean_constraint_valid_frac": to_float(row.get("mean_constraint_valid_frac")),
@@ -177,6 +183,14 @@ def safe_nanmax(values: Iterable[float]) -> float:
     return float(np.max(arr))
 
 
+def safe_nanmin(values: Iterable[float]) -> float:
+    arr = np.asarray(list(values), dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return float("nan")
+    return float(np.min(arr))
+
+
 def ci95_halfwidth(values: Iterable[float]) -> float:
     arr = np.asarray(list(values), dtype=float)
     arr = arr[np.isfinite(arr)]
@@ -196,8 +210,16 @@ def summarize_group(rows: List[Dict]) -> Dict:
         "std_best_omega": safe_std(r["mean_best_omega"] for r in rows),
         "ci95_best_omega": ci95_halfwidth(r["mean_best_omega"] for r in rows),
         "best_omega_global": float(np.nanmin([r["best_omega_global"] for r in rows])),
+        "mean_best_omega_is_feasible": safe_mean(r["mean_best_omega_is_feasible"] for r in rows),
+        "mean_feasible_best_omega": safe_mean(r["mean_feasible_best_omega"] for r in rows),
+        "std_feasible_best_omega": safe_std(r["mean_feasible_best_omega"] for r in rows),
+        "ci95_feasible_best_omega": ci95_halfwidth(r["mean_feasible_best_omega"] for r in rows),
+        "feasible_best_omega_global": safe_nanmin(r["feasible_best_omega_global"] for r in rows),
+        "mean_best_omega_feasibility_gap": safe_mean(r["mean_best_omega_feasibility_gap"] for r in rows),
         "mean_best_theta_pd": safe_mean(r["mean_best_theta_pd"] for r in rows),
         "mean_best_n_co": safe_mean(r["mean_best_n_co"] for r in rows),
+        "mean_feasible_best_theta_pd": safe_mean(r["mean_feasible_best_theta_pd"] for r in rows),
+        "mean_feasible_best_n_co": safe_mean(r["mean_feasible_best_n_co"] for r in rows),
         "mean_noop_ratio": safe_mean(r["mean_noop_ratio"] for r in rows),
         "mean_mutation_ratio": safe_mean(r["mean_mutation_ratio"] for r in rows),
         "mean_constraint_valid_frac": safe_mean(r["mean_constraint_valid_frac"] for r in rows),
@@ -228,8 +250,8 @@ def write_markdown(path: Path, detail_rows: List[Dict], summary_rows: List[Dict]
     if summary_rows:
         lines.append("## Method Summary")
         lines.append("")
-        lines.append("| mu_CO (eV) | Method | n_train_seeds | mean(best_omega) | std | 95% CI | best_omega_global | mean(theta_Pd) | mean(N_CO) | valid_frac | noop_ratio |")
-        lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+        lines.append("| mu_CO (eV) | Method | n_train_seeds | mean(best_omega) | mean(feasible_best_omega) | std(best) | 95% CI(best) | best_omega_global | feasible_best_omega_global | mean(theta_Pd) | mean(N_CO) | best_feasible_frac | valid_frac | noop_ratio |")
+        lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         for row in sorted(summary_rows, key=lambda r: (r["mu_co"], r["method"])):
             lines.append(
                 "| "
@@ -237,11 +259,14 @@ def write_markdown(path: Path, detail_rows: List[Dict], summary_rows: List[Dict]
                 f"{row['method']} | "
                 f"{int(row['n_train_seeds'])} | "
                 f"{row['mean_best_omega']:.6f} | "
+                f"{row['mean_feasible_best_omega']:.6f} | "
                 f"{row['std_best_omega']:.6f} | "
                 f"{row['ci95_best_omega']:.6f} | "
                 f"{row['best_omega_global']:.6f} | "
+                f"{row['feasible_best_omega_global']:.6f} | "
                 f"{row['mean_best_theta_pd']:.6f} | "
                 f"{row['mean_best_n_co']:.6f} | "
+                f"{row['mean_best_omega_is_feasible']:.6f} | "
                 f"{row['mean_constraint_valid_frac']:.6f} | "
                 f"{row['mean_noop_ratio']:.6f} |"
             )
@@ -250,8 +275,8 @@ def write_markdown(path: Path, detail_rows: List[Dict], summary_rows: List[Dict]
     if gap_rows:
         lines.append("## Method Gaps")
         lines.append("")
-        lines.append("| mu_CO (eV) | comparison | lhs_mean(best_omega) | rhs_mean(best_omega) | gap(lhs-rhs) | lhs_n | rhs_n |")
-        lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
+        lines.append("| mu_CO (eV) | comparison | lhs_mean(best_omega) | rhs_mean(best_omega) | gap(best) | lhs_mean(feasible_best_omega) | rhs_mean(feasible_best_omega) | gap(feasible_best) | lhs_n | rhs_n |")
+        lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         for row in sorted(gap_rows, key=lambda r: r["mu_co"]):
             lines.append(
                 "| "
@@ -260,6 +285,9 @@ def write_markdown(path: Path, detail_rows: List[Dict], summary_rows: List[Dict]
                 f"{row['lhs_mean_best_omega']:.6f} | "
                 f"{row['rhs_mean_best_omega']:.6f} | "
                 f"{row['gap_lhs_minus_rhs']:.6f} | "
+                f"{row['lhs_mean_feasible_best_omega']:.6f} | "
+                f"{row['rhs_mean_feasible_best_omega']:.6f} | "
+                f"{row['feasible_gap_lhs_minus_rhs']:.6f} | "
                 f"{int(row['lhs_n_train_seeds'])} | "
                 f"{int(row['rhs_n_train_seeds'])} |"
             )
@@ -268,8 +296,8 @@ def write_markdown(path: Path, detail_rows: List[Dict], summary_rows: List[Dict]
     if detail_rows:
         lines.append("## Per Train-Seed Rows")
         lines.append("")
-        lines.append("| label | mu_CO (eV) | method | train_seed | mean(best_omega) | best_omega_global | theta_Pd | N_CO | valid_frac | source_dir |")
-        lines.append("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
+        lines.append("| label | mu_CO (eV) | method | train_seed | mean(best_omega) | mean(feasible_best_omega) | best_omega_global | feasible_best_omega_global | theta_Pd | N_CO | best_feasible_frac | valid_frac | source_dir |")
+        lines.append("| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |")
         for row in sorted(detail_rows, key=lambda r: (r["mu_co"], r["method"], r["train_seed"])):
             lines.append(
                 "| "
@@ -278,9 +306,12 @@ def write_markdown(path: Path, detail_rows: List[Dict], summary_rows: List[Dict]
                 f"{row['method']} | "
                 f"{int(row['train_seed'])} | "
                 f"{row['mean_best_omega']:.6f} | "
+                f"{row['mean_feasible_best_omega']:.6f} | "
                 f"{row['best_omega_global']:.6f} | "
+                f"{row['feasible_best_omega_global']:.6f} | "
                 f"{row['mean_best_theta_pd']:.6f} | "
                 f"{row['mean_best_n_co']:.6f} | "
+                f"{row['mean_best_omega_is_feasible']:.6f} | "
                 f"{row['mean_constraint_valid_frac']:.6f} | "
                 f"{row['source_dir']} |"
             )
@@ -317,6 +348,9 @@ def build_gap_rows(summary_rows: List[Dict]) -> List[Dict]:
                     "lhs_mean_best_omega": float(lhs["mean_best_omega"]),
                     "rhs_mean_best_omega": float(rhs["mean_best_omega"]),
                     "gap_lhs_minus_rhs": float(lhs["mean_best_omega"] - rhs["mean_best_omega"]),
+                    "lhs_mean_feasible_best_omega": float(lhs["mean_feasible_best_omega"]),
+                    "rhs_mean_feasible_best_omega": float(rhs["mean_feasible_best_omega"]),
+                    "feasible_gap_lhs_minus_rhs": float(lhs["mean_feasible_best_omega"] - rhs["mean_feasible_best_omega"]),
                     "lhs_n_train_seeds": int(lhs["n_train_seeds"]),
                     "rhs_n_train_seeds": int(rhs["n_train_seeds"]),
                 }
