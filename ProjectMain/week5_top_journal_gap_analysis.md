@@ -61,6 +61,28 @@ Budget scaling result:
 - `mu_CO = -0.2 eV`: 2048-step training improved `mean_best_omega` by about `8.37 eV` versus the 512-step strict-stop baseline.
 - `mu_CO = -0.6 eV`: 2048-step training improved `mean_best_omega` by about `39.88 eV` versus the 512-step strict-stop baseline.
 
+New fixed-composition control:
+
+- A fair `swap_delta_strict_stop` baseline was added so that fixed-composition local search uses the same strict-stop protocol as the mutation mainline instead of carrying an extra noop path.
+- At `mu_CO = -0.2 eV`, the completed fixed-composition train seeds currently give
+  `mean_best_omega = -323.25 eV` for `seed_11`
+  and `-323.27 eV` for `seed_22`
+  from
+  `checkpoints/week5_swapctrl_m02_strictstop_2k_s3/swap_delta_strict_stop/seed_11/standard_eval_summary.csv`
+  and
+  `checkpoints/week5_swapctrl_m02_strictstop_2k_s3/swap_delta_strict_stop/seed_22/standard_eval_summary.csv`.
+- The matched open-composition mainline at the same budget gave
+  `mean_best_omega = -345.01 eV` for `seed_11`
+  and `-346.39 eV` for `seed_22`
+  from `checkpoints/week5_longrun_m02_strictstop_2k_s2/standard_eval_by_train_seed.csv`.
+- Over the matched completed seeds, the mutation mainline is better by about `22.44 eV` in `mean_best_omega`.
+
+Interpretation:
+
+- This gap is too large to explain as a critic artifact.
+- The gain is coming from allowing local composition reconfiguration under the grand-potential objective, not just from giving PPO a cleaner stop action.
+- That is a materially stronger scientific claim because it aligns with operando adsorbate-induced segregation and restructuring physics rather than a purely algorithmic tuning story.
+
 Critic-health signal:
 
 - Recent 2048-step runs ended with substantially higher `train/explained_variance` than the short-budget runs:
@@ -94,6 +116,7 @@ Interpretation:
 
 4. Fixed-composition rigor is missing from the main comparison.
    The current mutation setting allows composition drift. That is valid for a grand-canonical search claim, but weaker if the manuscript claim is about optimizing within a fixed alloy loading.
+   The new strict-stop swap control is the right direction and should now be completed at both chemical potentials.
 
 5. Post-fix PBRS is not fully sealed.
    The strongest negative result against PBRS is still short of a full long-budget multi-seed closure.
@@ -132,6 +155,7 @@ Recommended order:
 - AIMATDESIGN: https://www.nature.com/articles/s41524-025-01894-x
 - Deep RL for inverse inorganic materials design: https://www.nature.com/articles/s41524-024-01474-5
 - HDRL-FP: https://www.nature.com/articles/s41467-024-50531-6
+- Adsorbate-driven alloy surface restructuring example: https://www.nature.com/articles/s41467-021-21555-z
 - Invalid action masking: https://arxiv.org/abs/2006.14171
 - Constrained Policy Optimization: https://proceedings.mlr.press/v70/achiam17a.html
 - PPO in cooperative games: https://arxiv.org/abs/2103.01955

@@ -33,6 +33,7 @@ PROFILE_CHOICES = {
     "mutation_pbrs_stop",
     "mutation_pbrs_strict_stop",
     "swap_delta_stop",
+    "swap_delta_strict_stop",
 }
 
 
@@ -238,6 +239,25 @@ def build_env_config(profile: str, seed: int, mu_co: float, max_steps: int) -> E
         cfg.constraint_lambda_init = 0.0
         cfg.constraint_lambda_min = 0.0
         cfg.constraint_lambda_max = 0.0
+    elif profile == "swap_delta_strict_stop":
+        cfg.action_mode = "swap"
+        cfg.enable_noop_action = False
+        cfg.stop_terminates = True
+        cfg.min_stop_steps = 8
+        cfg.reward.reward_profile = "pure_delta_omega"
+        cfg.reward_profile = "pure_delta_omega"
+        cfg.uma_pbrs.use_uma_pbrs = False
+        cfg.use_uma_pbrs = False
+        cfg.constraint.constraint_update_mode = "frozen"
+        cfg.constraint.constraint_weight = 0.0
+        cfg.constraint.constraint_lambda_init = 0.0
+        cfg.constraint.constraint_lambda_min = 0.0
+        cfg.constraint.constraint_lambda_max = 0.0
+        cfg.constraint_update_mode = "frozen"
+        cfg.constraint_weight = 0.0
+        cfg.constraint_lambda_init = 0.0
+        cfg.constraint_lambda_min = 0.0
+        cfg.constraint_lambda_max = 0.0
     else:
         raise ValueError(f"Unsupported profile: {profile}")
 
@@ -246,11 +266,7 @@ def build_env_config(profile: str, seed: int, mu_co: float, max_steps: int) -> E
 
 def build_train_config(profile: str, total_steps: int, device: str) -> TrainConfig:
     use_pirp = profile.startswith("mutation_")
-    noop_bonus = 0.0 if profile in {
-        "mutation_delta_strict_stop",
-        "mutation_delta_stop_nobonus",
-        "mutation_pbrs_strict_stop",
-    } else 0.25
+    noop_bonus = 0.0 if (profile.endswith("strict_stop") or profile == "mutation_delta_stop_nobonus") else 0.25
     return TrainConfig(
         total_timesteps=int(total_steps),
         n_envs=1,
@@ -274,7 +290,12 @@ def eval_model(model, eval_steps: int) -> Dict[str, float]:
 
     omega_trace: List[float] = []
     reward_trace: List[float] = []
+    violation_trace: List[float] = []
+    dfrac_trace: List[float] = []
+    uncertainty_trace: List[float] = []
     stop_steps = 0
+    legal_steps = 0
+    mutation_steps = 0
     best_omega = float("inf")
     best_theta = float("nan")
     best_nco = -1
@@ -292,10 +313,15 @@ def eval_model(model, eval_steps: int) -> Dict[str, float]:
         omega = float(info.get("omega", np.nan))
         theta = float(info.get("pd_surface_coverage", np.nan))
         nco = int(info.get("n_co", -1))
+        violation = float(info.get("constraint_violation", np.nan))
+        d_frac = float(info.get("constraint_d_frac", np.nan))
+        uncertainty = float(info.get("uncertainty", np.nan))
         reward_raw = float(info.get("reward_terms", {}).get("reward_total", np.nan))
 
         if action_type in {"no_op", "stop"}:
             stop_steps += 1
+        if action_type in {"mutation", "swap"}:
+            mutation_steps += 1
         if np.isfinite(omega):
             omega_trace.append(omega)
             if omega < best_omega:
@@ -304,6 +330,14 @@ def eval_model(model, eval_steps: int) -> Dict[str, float]:
                 best_nco = nco
         if np.isfinite(reward_raw):
             reward_trace.append(reward_raw)
+        if np.isfinite(violation):
+            violation_trace.append(violation)
+            if violation <= 1e-12:
+                legal_steps += 1
+        if np.isfinite(d_frac):
+            dfrac_trace.append(d_frac)
+        if np.isfinite(uncertainty):
+            uncertainty_trace.append(uncertainty)
 
         final_omega = omega
         final_theta = theta
@@ -320,6 +354,13 @@ def eval_model(model, eval_steps: int) -> Dict[str, float]:
         "final_theta_pd": float(final_theta),
         "final_n_co": int(final_nco),
         "stop_ratio": float(stop_steps / max(1, int(eval_steps))),
+        "mutation_ratio": float(mutation_steps / max(1, int(eval_steps))),
+        "constraint_valid_frac": float(legal_steps / max(1, len(violation_trace))) if violation_trace else float("nan"),
+        "mean_constraint_violation": float(np.nanmean(violation_trace)) if violation_trace else float("nan"),
+        "max_constraint_violation": float(np.nanmax(violation_trace)) if violation_trace else float("nan"),
+        "mean_constraint_d_frac": float(np.nanmean(dfrac_trace)) if dfrac_trace else float("nan"),
+        "max_constraint_d_frac": float(np.nanmax(dfrac_trace)) if dfrac_trace else float("nan"),
+        "mean_uncertainty": float(np.nanmean(uncertainty_trace)) if uncertainty_trace else float("nan"),
         "mean_eval_omega": float(np.nanmean(omega_trace)) if omega_trace else float("nan"),
         "mean_eval_reward": float(np.nanmean(reward_trace)) if reward_trace else float("nan"),
     }
@@ -378,6 +419,13 @@ def convert_case_row(row: Dict[str, str]) -> Dict:
         "final_omega",
         "final_theta_pd",
         "stop_ratio",
+        "mutation_ratio",
+        "constraint_valid_frac",
+        "mean_constraint_violation",
+        "max_constraint_violation",
+        "mean_constraint_d_frac",
+        "max_constraint_d_frac",
+        "mean_uncertainty",
         "mean_eval_omega",
         "mean_eval_reward",
     ):
@@ -403,6 +451,13 @@ def convert_standard_seed_row(row: Dict[str, str]) -> Dict:
         "dfrac_autocorr_lag2",
         "noop_ratio",
         "lambda_last",
+        "mutation_ratio",
+        "constraint_valid_frac",
+        "mean_constraint_violation",
+        "max_constraint_violation",
+        "mean_constraint_d_frac",
+        "max_constraint_d_frac",
+        "mean_uncertainty",
     ):
         if key in converted:
             converted[key] = _maybe_float(converted[key])
@@ -428,6 +483,13 @@ def convert_standard_train_row(row: Dict[str, str]) -> Dict:
         "mean_dfrac_autocorr_lag2",
         "mean_noop_ratio",
         "mean_lambda_last",
+        "mean_mutation_ratio",
+        "mean_constraint_valid_frac",
+        "mean_constraint_violation",
+        "max_constraint_violation",
+        "mean_constraint_d_frac",
+        "max_constraint_d_frac",
+        "mean_uncertainty",
     ):
         if key in converted:
             converted[key] = _maybe_float(converted[key])
@@ -503,10 +565,14 @@ def standard_eval_saved_model(
         omega_trace: List[float] = []
         dfrac_trace: List[float] = []
         stop_steps = 0
+        legal_steps = 0
+        mutation_steps = 0
         best_omega = float("inf")
         best_theta = float("nan")
         best_nco = -1
         last_lambda = float("nan")
+        violation_trace: List[float] = []
+        uncertainty_trace: List[float] = []
 
         for _ in range(int(eval_steps)):
             masks = get_action_masks(venv)
@@ -518,11 +584,15 @@ def standard_eval_saved_model(
             theta = float(info.get("pd_surface_coverage", np.nan))
             nco = int(info.get("n_co", -1))
             d_frac = float(info.get("constraint_d_frac", np.nan))
+            violation = float(info.get("constraint_violation", np.nan))
             lam = float(info.get("constraint_lambda", np.nan))
+            uncertainty = float(info.get("uncertainty", np.nan))
             action_type = str(info.get("action_type", ""))
 
             if action_type in {"no_op", "stop"}:
                 stop_steps += 1
+            if action_type in {"mutation", "swap"}:
+                mutation_steps += 1
             if np.isfinite(omega):
                 omega_trace.append(omega)
                 if omega < best_omega:
@@ -531,8 +601,14 @@ def standard_eval_saved_model(
                     best_nco = nco
             if np.isfinite(d_frac):
                 dfrac_trace.append(d_frac)
+            if np.isfinite(violation):
+                violation_trace.append(violation)
+                if violation <= 1e-12:
+                    legal_steps += 1
             if np.isfinite(lam):
                 last_lambda = lam
+            if np.isfinite(uncertainty):
+                uncertainty_trace.append(uncertainty)
 
             if dones[0]:
                 obs = venv.reset()
@@ -546,7 +622,14 @@ def standard_eval_saved_model(
                 "omega_spearman": float(spearman_corr(omega_trace)),
                 "dfrac_autocorr_lag2": float(autocorr_lag(dfrac_trace, lag=2)),
                 "noop_ratio": float(stop_steps / max(1, int(eval_steps))),
+                "mutation_ratio": float(mutation_steps / max(1, int(eval_steps))),
                 "lambda_last": float(last_lambda),
+                "constraint_valid_frac": float(legal_steps / max(1, len(violation_trace))) if violation_trace else float("nan"),
+                "mean_constraint_violation": float(np.nanmean(violation_trace)) if violation_trace else float("nan"),
+                "max_constraint_violation": float(np.nanmax(violation_trace)) if violation_trace else float("nan"),
+                "mean_constraint_d_frac": float(np.nanmean(dfrac_trace)) if dfrac_trace else float("nan"),
+                "max_constraint_d_frac": float(np.nanmax(dfrac_trace)) if dfrac_trace else float("nan"),
+                "mean_uncertainty": float(np.nanmean(uncertainty_trace)) if uncertainty_trace else float("nan"),
             }
         )
 
@@ -563,6 +646,13 @@ def aggregate_standard_eval(rows: Sequence[Dict[str, float]]) -> Dict[str, float
         "mean_dfrac_autocorr_lag2": float(np.nanmean([r["dfrac_autocorr_lag2"] for r in rows])),
         "mean_noop_ratio": float(np.nanmean([r["noop_ratio"] for r in rows])),
         "mean_lambda_last": float(np.nanmean([r["lambda_last"] for r in rows])),
+        "mean_mutation_ratio": float(np.nanmean([r["mutation_ratio"] for r in rows])),
+        "mean_constraint_valid_frac": float(np.nanmean([r["constraint_valid_frac"] for r in rows])),
+        "mean_constraint_violation": float(np.nanmean([r["mean_constraint_violation"] for r in rows])),
+        "max_constraint_violation": float(np.nanmax([r["max_constraint_violation"] for r in rows])),
+        "mean_constraint_d_frac": float(np.nanmean([r["mean_constraint_d_frac"] for r in rows])),
+        "max_constraint_d_frac": float(np.nanmax([r["max_constraint_d_frac"] for r in rows])),
+        "mean_uncertainty": float(np.nanmean([r["mean_uncertainty"] for r in rows])),
     }
 
 
@@ -588,8 +678,8 @@ def write_markdown_summary(
     if standard_profile_rows:
         lines.append("### Standardized profile ranking")
         lines.append("")
-        lines.append("| Profile | mean(best_omega) | best_omega_global | mean(theta_Pd) | mean(N_CO) | mean(noop_ratio) | mean(omega_spearman) |")
-        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+        lines.append("| Profile | mean(best_omega) | best_omega_global | mean(theta_Pd) | mean(N_CO) | mean(noop_ratio) | mean(active_ratio) | mean(valid_frac) |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         for row in standard_profile_rows:
             lines.append(
                 "| "
@@ -599,15 +689,32 @@ def write_markdown_summary(
                 f"{row['mean_best_theta_pd']:.6f} | "
                 f"{row['mean_best_n_co']:.6f} | "
                 f"{row['mean_noop_ratio']:.6f} | "
-                f"{row['mean_omega_spearman']:.6f} |"
+                f"{row['mean_mutation_ratio']:.6f} | "
+                f"{row['mean_constraint_valid_frac']:.6f} |"
+            )
+        lines.append("")
+
+        lines.append("### Constraint and uncertainty summary")
+        lines.append("")
+        lines.append("| Profile | mean(constraint_violation) | max(constraint_violation) | mean(d_frac) | max(d_frac) | mean(uncertainty) |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+        for row in standard_profile_rows:
+            lines.append(
+                "| "
+                f"{row['profile']} | "
+                f"{row['mean_constraint_violation']:.6f} | "
+                f"{row['max_constraint_violation']:.6f} | "
+                f"{row['mean_constraint_d_frac']:.6f} | "
+                f"{row['max_constraint_d_frac']:.6f} | "
+                f"{row['mean_uncertainty']:.6f} |"
             )
         lines.append("")
 
     if standard_eval_train_rows:
         lines.append("### Per train-seed standardized evaluation")
         lines.append("")
-        lines.append("| Profile | train_seed | mean(best_omega) | best_omega_global | mean(theta_Pd) | mean(N_CO) | mean(noop_ratio) |")
-        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+        lines.append("| Profile | train_seed | mean(best_omega) | best_omega_global | mean(theta_Pd) | mean(N_CO) | mean(noop_ratio) | mean(valid_frac) |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
         for row in standard_eval_train_rows:
             lines.append(
                 "| "
@@ -617,15 +724,16 @@ def write_markdown_summary(
                 f"{row['best_omega_global']:.6f} | "
                 f"{row['mean_best_theta_pd']:.6f} | "
                 f"{row['mean_best_n_co']:.6f} | "
-                f"{row['mean_noop_ratio']:.6f} |"
+                f"{row['mean_noop_ratio']:.6f} | "
+                f"{row['mean_constraint_valid_frac']:.6f} |"
             )
         lines.append("")
 
     if summary_rows:
         lines.append("### Short post-train evaluation")
         lines.append("")
-        lines.append("| Profile | mean(best_omega) | mean(final_omega) | mean(theta_Pd) | mean(N_CO) | mean(stop_ratio) |")
-        lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+        lines.append("| Profile | mean(best_omega) | mean(final_omega) | mean(theta_Pd) | mean(N_CO) | mean(stop_ratio) | mean(valid_frac) |")
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
         for row in summary_rows:
             lines.append(
                 "| "
@@ -634,7 +742,8 @@ def write_markdown_summary(
                 f"{row['mean_final_omega']:.6f} | "
                 f"{row['mean_best_theta_pd']:.6f} | "
                 f"{row['mean_best_n_co']:.6f} | "
-                f"{row['mean_stop_ratio']:.6f} |"
+                f"{row['mean_stop_ratio']:.6f} | "
+                f"{row['mean_constraint_valid_frac']:.6f} |"
             )
         lines.append("")
 
@@ -805,6 +914,13 @@ def main() -> None:
                 "mean_best_n_co": float(np.nanmean([r["best_n_co"] for r in sub])),
                 "mean_final_omega": float(np.nanmean([r["final_omega"] for r in sub])),
                 "mean_stop_ratio": float(np.nanmean([r["stop_ratio"] for r in sub])),
+                "mean_mutation_ratio": float(np.nanmean([r["mutation_ratio"] for r in sub])),
+                "mean_constraint_valid_frac": float(np.nanmean([r["constraint_valid_frac"] for r in sub])),
+                "mean_constraint_violation": float(np.nanmean([r["mean_constraint_violation"] for r in sub])),
+                "max_constraint_violation": float(np.nanmax([r["max_constraint_violation"] for r in sub])),
+                "mean_constraint_d_frac": float(np.nanmean([r["mean_constraint_d_frac"] for r in sub])),
+                "max_constraint_d_frac": float(np.nanmax([r["max_constraint_d_frac"] for r in sub])),
+                "mean_uncertainty": float(np.nanmean([r["mean_uncertainty"] for r in sub])),
                 "mean_eval_reward": float(np.nanmean([r["mean_eval_reward"] for r in sub])),
             }
         )
@@ -829,6 +945,13 @@ def main() -> None:
                     "mean_omega_spearman": float(np.nanmean([r["mean_omega_spearman"] for r in sub])),
                     "mean_dfrac_autocorr_lag2": float(np.nanmean([r["mean_dfrac_autocorr_lag2"] for r in sub])),
                     "mean_noop_ratio": float(np.nanmean([r["mean_noop_ratio"] for r in sub])),
+                    "mean_mutation_ratio": float(np.nanmean([r["mean_mutation_ratio"] for r in sub])),
+                    "mean_constraint_valid_frac": float(np.nanmean([r["mean_constraint_valid_frac"] for r in sub])),
+                    "mean_constraint_violation": float(np.nanmean([r["mean_constraint_violation"] for r in sub])),
+                    "max_constraint_violation": float(np.nanmax([r["max_constraint_violation"] for r in sub])),
+                    "mean_constraint_d_frac": float(np.nanmean([r["mean_constraint_d_frac"] for r in sub])),
+                    "max_constraint_d_frac": float(np.nanmax([r["max_constraint_d_frac"] for r in sub])),
+                    "mean_uncertainty": float(np.nanmean([r["mean_uncertainty"] for r in sub])),
                 }
             )
 
