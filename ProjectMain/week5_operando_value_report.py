@@ -41,6 +41,15 @@ GROUPS: tuple[ExperimentGroup, ...] = (
         ),
     ),
     ExperimentGroup(
+        label="bounded_open_m02",
+        mu_co=-0.2,
+        method="bounded_open_mutation",
+        sources=(
+            "week5_maskedopen_m02_strictstop_2k_s3",
+            "week5_maskedopen_m02_strictstop_2k_seed4455",
+        ),
+    ),
+    ExperimentGroup(
         label="mutation_open_m06",
         mu_co=-0.6,
         method="open_composition_mutation",
@@ -57,6 +66,15 @@ GROUPS: tuple[ExperimentGroup, ...] = (
         sources=(
             "week5_swapctrl_m06_strictstop_2k_s3",
             "week5_swapctrl_m06_strictstop_2k_seed4455",
+        ),
+    ),
+    ExperimentGroup(
+        label="bounded_open_m06",
+        mu_co=-0.6,
+        method="bounded_open_mutation",
+        sources=(
+            "week5_maskedopen_m06_strictstop_2k_s3",
+            "week5_maskedopen_m06_strictstop_2k_seed4455",
         ),
     ),
 )
@@ -230,19 +248,20 @@ def write_markdown(path: Path, detail_rows: List[Dict], summary_rows: List[Dict]
         lines.append("")
 
     if gap_rows:
-        lines.append("## Open-vs-Fixed Gap")
+        lines.append("## Method Gaps")
         lines.append("")
-        lines.append("| mu_CO (eV) | open_mean(best_omega) | fixed_mean(best_omega) | gap(open-fixed) | open_n | fixed_n |")
-        lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+        lines.append("| mu_CO (eV) | comparison | lhs_mean(best_omega) | rhs_mean(best_omega) | gap(lhs-rhs) | lhs_n | rhs_n |")
+        lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
         for row in sorted(gap_rows, key=lambda r: r["mu_co"]):
             lines.append(
                 "| "
                 f"{row['mu_co']:.1f} | "
-                f"{row['open_mean_best_omega']:.6f} | "
-                f"{row['fixed_mean_best_omega']:.6f} | "
-                f"{row['gap_open_minus_fixed']:.6f} | "
-                f"{int(row['open_n_train_seeds'])} | "
-                f"{int(row['fixed_n_train_seeds'])} |"
+                f"{row['comparison']} | "
+                f"{row['lhs_mean_best_omega']:.6f} | "
+                f"{row['rhs_mean_best_omega']:.6f} | "
+                f"{row['gap_lhs_minus_rhs']:.6f} | "
+                f"{int(row['lhs_n_train_seeds'])} | "
+                f"{int(row['rhs_n_train_seeds'])} |"
             )
         lines.append("")
 
@@ -276,22 +295,32 @@ def build_gap_rows(summary_rows: List[Dict]) -> List[Dict]:
     for row in summary_rows:
         by_mu.setdefault(float(row["mu_co"]), {})[str(row["method"])] = row
 
+    comparisons = (
+        ("open_composition_mutation", "bounded_open_mutation", "open_vs_bounded"),
+        ("bounded_open_mutation", "fixed_composition_swap", "bounded_vs_fixed"),
+        ("open_composition_mutation", "fixed_composition_swap", "open_vs_fixed"),
+    )
+
     gaps: List[Dict] = []
     for mu_co, sub in sorted(by_mu.items()):
-        open_row = sub.get("open_composition_mutation")
-        fixed_row = sub.get("fixed_composition_swap")
-        if open_row is None or fixed_row is None:
-            continue
-        gaps.append(
-            {
-                "mu_co": float(mu_co),
-                "open_mean_best_omega": float(open_row["mean_best_omega"]),
-                "fixed_mean_best_omega": float(fixed_row["mean_best_omega"]),
-                "gap_open_minus_fixed": float(open_row["mean_best_omega"] - fixed_row["mean_best_omega"]),
-                "open_n_train_seeds": int(open_row["n_train_seeds"]),
-                "fixed_n_train_seeds": int(fixed_row["n_train_seeds"]),
-            }
-        )
+        for lhs_method, rhs_method, label in comparisons:
+            lhs = sub.get(lhs_method)
+            rhs = sub.get(rhs_method)
+            if lhs is None or rhs is None:
+                continue
+            gaps.append(
+                {
+                    "mu_co": float(mu_co),
+                    "comparison": label,
+                    "lhs_method": lhs_method,
+                    "rhs_method": rhs_method,
+                    "lhs_mean_best_omega": float(lhs["mean_best_omega"]),
+                    "rhs_mean_best_omega": float(rhs["mean_best_omega"]),
+                    "gap_lhs_minus_rhs": float(lhs["mean_best_omega"] - rhs["mean_best_omega"]),
+                    "lhs_n_train_seeds": int(lhs["n_train_seeds"]),
+                    "rhs_n_train_seeds": int(rhs["n_train_seeds"]),
+                }
+            )
     return gaps
 
 

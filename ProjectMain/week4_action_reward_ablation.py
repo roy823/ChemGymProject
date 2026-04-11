@@ -30,6 +30,7 @@ PROFILE_CHOICES = {
     "mutation_delta_stop",
     "mutation_delta_stop_nobonus",
     "mutation_delta_strict_stop",
+    "mutation_delta_strict_stop_masked",
     "mutation_pbrs_stop",
     "mutation_pbrs_strict_stop",
     "swap_delta_stop",
@@ -153,6 +154,29 @@ def build_env_config(profile: str, seed: int, mu_co: float, max_steps: int) -> E
         cfg.reward_profile = "pure_delta_omega"
         cfg.uma_pbrs.use_uma_pbrs = False
         cfg.use_uma_pbrs = False
+        cfg.constraint.constraint_update_mode = "frozen"
+        cfg.constraint.constraint_weight = 0.0
+        cfg.constraint.constraint_lambda_init = 0.0
+        cfg.constraint.constraint_lambda_min = 0.0
+        cfg.constraint.constraint_lambda_max = 0.0
+        cfg.constraint_update_mode = "frozen"
+        cfg.constraint_weight = 0.0
+        cfg.constraint_lambda_init = 0.0
+        cfg.constraint_lambda_min = 0.0
+        cfg.constraint_lambda_max = 0.0
+    elif profile == "mutation_delta_strict_stop_masked":
+        cfg.action_mode = "mutation"
+        cfg.enable_noop_action = False
+        cfg.stop_terminates = True
+        cfg.min_stop_steps = 8
+        cfg.reward.reward_profile = "pure_delta_omega"
+        cfg.reward_profile = "pure_delta_omega"
+        cfg.uma_pbrs.use_uma_pbrs = False
+        cfg.use_uma_pbrs = False
+        cfg.use_deviation_mask = True
+        # Keep the operando search open, but limit near-surface composition
+        # drift to a moderate envelope around the bulk target.
+        cfg.max_deviation = 4
         cfg.constraint.constraint_update_mode = "frozen"
         cfg.constraint.constraint_weight = 0.0
         cfg.constraint.constraint_lambda_init = 0.0

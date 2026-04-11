@@ -44,9 +44,9 @@ def parse_args():
     parser.add_argument("--mode", choices=["train", "baseline", "eval"], default="train")
     parser.add_argument(
         "--experiment-profile",
-        choices=["default", "route_a", "mutation_delta_stop", "mutation_delta_strict_stop", "swap_stop", "swap_delta_strict_stop"],
+        choices=["default", "route_a", "mutation_delta_stop", "mutation_delta_strict_stop", "mutation_delta_strict_stop_masked", "swap_stop", "swap_delta_strict_stop"],
         default="default",
-        help="Apply a curated parameter bundle. route_a = hard mask + debt shaping + no UMA PBRS; mutation_delta_stop = mutation + stop + pure DeltaOmega; mutation_delta_strict_stop = mutation + explicit stop only; swap_stop = swap-only + stop + pure DeltaOmega; swap_delta_strict_stop = swap-only + explicit stop only + pure DeltaOmega.",
+        help="Apply a curated parameter bundle. route_a = hard mask + debt shaping + no UMA PBRS; mutation_delta_stop = mutation + stop + pure DeltaOmega; mutation_delta_strict_stop = mutation + explicit stop only; mutation_delta_strict_stop_masked = mutation + explicit stop + hard deviation mask; swap_stop = swap-only + stop + pure DeltaOmega; swap_delta_strict_stop = swap-only + explicit stop only + pure DeltaOmega.",
     )
     parser.add_argument("--obs-mode", choices=["image", "graph"], default="graph")
     parser.add_argument("--total-steps", type=int, default=5000)
@@ -212,6 +212,22 @@ def apply_experiment_profile(args) -> None:
             args.constraint_lambda_min = 0.0
             args.constraint_lambda_max = 0.0
             args.enable_deviation_mask = False
+            args.noop_logit_bonus = 0.0
+            return
+
+        if profile == "mutation_delta_strict_stop_masked":
+            args.action_mode = "mutation"
+            args.disable_noop_action = True
+            args.stop_terminates = True
+            args.min_stop_steps = max(int(getattr(args, "min_stop_steps", 0)), 8)
+            args.reward_profile = "pure_delta_omega"
+            args.disable_uma_pbrs = True
+            args.constraint_update_mode = "frozen"
+            args.constraint_weight = 0.0
+            args.constraint_lambda_init = 0.0
+            args.constraint_lambda_min = 0.0
+            args.constraint_lambda_max = 0.0
+            args.enable_deviation_mask = True
             args.noop_logit_bonus = 0.0
             return
 
