@@ -4,7 +4,7 @@ import argparse
 import csv
 from argparse import Namespace
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 import torch
@@ -97,7 +97,13 @@ def build_oracle(args) -> object:
     return oracle
 
 
-def build_env_config(profile: str, seed: int, mu_co: float, max_steps: int) -> EnvConfig:
+def build_env_config(
+    profile: str,
+    seed: int,
+    mu_co: float,
+    max_steps: int,
+    max_deviation_override: Optional[int] = None,
+) -> EnvConfig:
     reward_cfg = RewardConfig(
         mu_co=float(mu_co),
         delta_omega_scale=20.0,
@@ -284,6 +290,9 @@ def build_env_config(profile: str, seed: int, mu_co: float, max_steps: int) -> E
         cfg.constraint_lambda_max = 0.0
     else:
         raise ValueError(f"Unsupported profile: {profile}")
+
+    if max_deviation_override is not None and bool(getattr(cfg, "use_deviation_mask", False)):
+        cfg.max_deviation = int(max_deviation_override)
 
     return cfg
 
@@ -559,6 +568,7 @@ def load_saved_model(
     mu_co: float,
     seed: int,
     eval_steps: int,
+    max_deviation_override: Optional[int] = None,
 ):
     model_path = run_dir / "latest_model"
     stats_path = run_dir / "latest_vec_normalize.pkl"
@@ -572,6 +582,7 @@ def load_saved_model(
         seed=int(seed),
         mu_co=float(mu_co),
         max_steps=max(int(eval_steps) + 24, 128),
+        max_deviation_override=max_deviation_override,
     )
 
     def _make_single():
@@ -591,6 +602,7 @@ def standard_eval_saved_model(
     mu_co: float,
     eval_seeds: Sequence[int],
     eval_steps: int,
+    max_deviation_override: Optional[int] = None,
 ) -> List[Dict[str, float]]:
     model_path = run_dir / "latest_model"
     stats_path = run_dir / "latest_vec_normalize.pkl"
@@ -606,6 +618,7 @@ def standard_eval_saved_model(
             seed=int(eval_seed),
             mu_co=float(mu_co),
             max_steps=max(int(eval_steps) + 16, 96),
+            max_deviation_override=max_deviation_override,
         )
 
         def _make_single():
@@ -874,6 +887,7 @@ def main() -> None:
     parser.add_argument("--write-summary-md", action="store_true")
     parser.add_argument("--save-root", type=str, default="ProjectMain/checkpoints/week4_action_reward_ablation")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--max-deviation-override", type=int, default=None)
     parser.add_argument("--oracle-mode", choices=["hybrid", "none"], default="hybrid")
     parser.add_argument("--ads-task", type=str, default="oc25")
     parser.add_argument("--ads-sm-ckpt", type=str, default="ProjectMain/checkpoints/esen_sm_conserve.pt")
@@ -898,6 +912,7 @@ def main() -> None:
     print("TRAIN_STEPS", int(args.train_steps))
     print("EVAL_STEPS", int(args.eval_steps))
     print("STANDARD_EVAL", not bool(args.disable_standard_eval))
+    print("MAX_DEVIATION_OVERRIDE", args.max_deviation_override)
 
     oracle = build_oracle(args)
     standard_eval_seeds = parse_int_list(args.standard_eval_seeds)
@@ -910,6 +925,7 @@ def main() -> None:
                     seed=int(seed),
                     mu_co=float(args.mu_co),
                     max_steps=max(int(args.eval_steps) + 24, 128),
+                    max_deviation_override=args.max_deviation_override,
                 )
                 train_cfg = build_train_config(profile=profile, total_steps=int(args.train_steps), device=str(args.device))
                 case_dir = save_root / profile / f"seed_{seed}"
@@ -932,6 +948,7 @@ def main() -> None:
                         mu_co=float(args.mu_co),
                         seed=int(seed),
                         eval_steps=int(args.eval_steps),
+                        max_deviation_override=args.max_deviation_override,
                     )
                 elif bool(args.skip_existing) and has_saved_model:
                     print(f"[SkipExisting] Reusing saved model for profile={profile} seed={seed}")
@@ -942,6 +959,7 @@ def main() -> None:
                         mu_co=float(args.mu_co),
                         seed=int(seed),
                         eval_steps=int(args.eval_steps),
+                        max_deviation_override=args.max_deviation_override,
                     )
                 else:
                     model = train_agent(
@@ -961,6 +979,8 @@ def main() -> None:
                     "action_mode": env_cfg.action_mode,
                     "reward_profile": env_cfg.reward_profile,
                     "stop_terminates": bool(env_cfg.stop_terminates),
+                    "use_deviation_mask": bool(getattr(env_cfg, "use_deviation_mask", False)),
+                    "max_deviation": getattr(env_cfg, "max_deviation", None),
                     **metrics,
                 }
                 write_csv(case_dir / "case_metrics.csv", [row])
@@ -974,6 +994,7 @@ def main() -> None:
                         mu_co=float(args.mu_co),
                         eval_seeds=standard_eval_seeds,
                         eval_steps=int(args.standard_eval_steps),
+                        max_deviation_override=args.max_deviation_override,
                     )
                     persisted_eval_rows: List[Dict] = []
                     for eval_row in eval_rows:
@@ -982,6 +1003,8 @@ def main() -> None:
                                 "profile": profile,
                                 "train_seed": int(seed),
                                 "mu_co": float(args.mu_co),
+                                "use_deviation_mask": bool(getattr(env_cfg, "use_deviation_mask", False)),
+                                "max_deviation": getattr(env_cfg, "max_deviation", None),
                                 **eval_row,
                             }
                         )
@@ -990,6 +1013,8 @@ def main() -> None:
                         "profile": profile,
                         "train_seed": int(seed),
                         "mu_co": float(args.mu_co),
+                        "use_deviation_mask": bool(getattr(env_cfg, "use_deviation_mask", False)),
+                        "max_deviation": getattr(env_cfg, "max_deviation", None),
                         **aggregate_standard_eval(eval_rows),
                     }
                     write_csv(case_dir / "standard_eval_summary.csv", [summary])
