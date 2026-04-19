@@ -87,6 +87,14 @@ GROUPS: tuple[SweepGroup, ...] = (
         method="bounded_mutation",
         sources=("week6_masksweep_m06_md2_4k_s3",),
     ),
+    SweepGroup(
+        label="bounded_md6_m06_4k",
+        mu_co=-0.6,
+        budget_steps=4096,
+        max_deviation=6,
+        method="bounded_mutation",
+        sources=("week6_masksweep_m06_md6_4k_s3",),
+    ),
 )
 
 

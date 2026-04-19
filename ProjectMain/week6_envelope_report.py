@@ -48,6 +48,14 @@ GROUPS: tuple[EnvelopeGroup, ...] = (
         ),
     ),
     EnvelopeGroup(
+        label="open_m02_4k",
+        mu_co=-0.2,
+        budget_steps=4096,
+        max_deviation=None,
+        method="open_mutation",
+        sources=("week6_open_m02_strictstop_4k_s3",),
+    ),
+    EnvelopeGroup(
         label="bounded_md4_m02_2k",
         mu_co=-0.2,
         budget_steps=2048,
@@ -88,6 +96,14 @@ GROUPS: tuple[EnvelopeGroup, ...] = (
             "week5_longrun_m06_strictstop_2k_seed33",
             "week5_longrun_m06_strictstop_2k_seed4455",
         ),
+    ),
+    EnvelopeGroup(
+        label="open_m06_4k",
+        mu_co=-0.6,
+        budget_steps=4096,
+        max_deviation=None,
+        method="open_mutation",
+        sources=("week6_open_m06_strictstop_4k_s3",),
     ),
     EnvelopeGroup(
         label="bounded_md2_m06_2k",
@@ -136,6 +152,30 @@ GROUPS: tuple[EnvelopeGroup, ...] = (
         max_deviation=4,
         method="bounded_mutation",
         sources=("week6_boundedopen_m02_md4_4k_s3",),
+    ),
+    EnvelopeGroup(
+        label="bounded_md6_m02_2k",
+        mu_co=-0.2,
+        budget_steps=2048,
+        max_deviation=6,
+        method="bounded_mutation",
+        sources=("week6_masksweep_m02_md6_2k_s3",),
+    ),
+    EnvelopeGroup(
+        label="bounded_md6_m02_4k",
+        mu_co=-0.2,
+        budget_steps=4096,
+        max_deviation=6,
+        method="bounded_mutation",
+        sources=("week6_masksweep_m02_md6_4k_s3",),
+    ),
+    EnvelopeGroup(
+        label="bounded_md6_m06_4k",
+        mu_co=-0.6,
+        budget_steps=4096,
+        max_deviation=6,
+        method="bounded_mutation",
+        sources=("week6_masksweep_m06_md6_4k_s3",),
     ),
 )
 
