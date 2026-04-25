@@ -119,7 +119,12 @@ def load_envelope_summary(path: Path) -> List[Dict]:
 
 
 def load_baseline_dir(path: Path, method_label: str) -> List[Dict]:
-    """Load `<dir>/standard_eval_by_train_seed.csv` and aggregate to one row."""
+    """Load `<dir>/standard_eval_by_train_seed.csv` and aggregate to one row.
+
+    Best-effort budget extraction from the directory name. Pattern:
+    ``week7_baselines_<method>_<mu>_<budget>(_<suffix>)?`` where budget is
+    either a plain integer (e.g. ``256``) or k-shorthand (e.g. ``2k``).
+    """
     rows = read_csv_rows(path / "standard_eval_by_train_seed.csv")
     if not rows:
         return []
@@ -131,12 +136,23 @@ def load_baseline_dir(path: Path, method_label: str) -> List[Dict]:
     n = len(rows)
     mu_co = to_float(rows[0].get("mu_co")) if rows else float("nan")
 
+    budget = 0
+    parts = path.name.split("_")
+    for token in parts:
+        token_lower = token.lower()
+        if token_lower.endswith("k") and token_lower[:-1].isdigit():
+            budget = int(token_lower[:-1]) * 1024
+            break
+        if token.isdigit():
+            budget = int(token)
+            break
+
     return [
         {
             "method": method_label,
             "label": path.name,
             "mu_co": mu_co,
-            "budget_steps": 0,
+            "budget_steps": budget,
             "max_deviation": None,
             "n_seeds": n,
             "mean_best_omega": safe_mean(best),
@@ -164,7 +180,11 @@ def headline_table(
     target_budgets: List[int],
 ) -> List[Dict]:
     """For each (mu_co, budget), pick the strongest bounded mask result and
-    line it up against fixed_swap, ppo_open, random_mutation, sa_mutation."""
+    line it up against fixed_swap, ppo_open, random_mutation, sa_mutation.
+
+    Baseline rows must match the target budget exactly. Off-budget baselines
+    surface in a separate "Sample-efficiency probe" panel.
+    """
     out: List[Dict] = []
     for mu in target_mus:
         for budget in target_budgets:
@@ -188,22 +208,49 @@ def headline_table(
             row_dict["ppo_mask_mean_feasible_best_omega"] = best_bounded["mean_feasible_best_omega"] if best_bounded else float("nan")
             row_dict["ppo_mask_ci95"] = best_bounded["ci95_feasible_best_omega"] if best_bounded else float("nan")
 
-            # Match remaining methods at the same mu and budget.
             for method in ("ppo_open", "fixed_swap", "random_mutation", "sa_mutation"):
                 rows = (envelope_rows + baseline_rows)
-                rows = [r for r in rows if r["method"] == method and abs(r["mu_co"] - mu) < 1e-3 and (r["budget_steps"] == 0 or r["budget_steps"] == budget)]
+                rows = [
+                    r for r in rows
+                    if r["method"] == method
+                    and abs(r["mu_co"] - mu) < 1e-3
+                    and r["budget_steps"] == budget
+                ]
                 if not rows:
                     row_dict[f"{method}_mean_feasible_best_omega"] = float("nan")
                     row_dict[f"{method}_ci95"] = float("nan")
                     row_dict[f"{method}_n_seeds"] = 0
                     continue
-                # Prefer matching budget; fall back to budget=0 (baseline rows).
-                rows.sort(key=lambda r: (abs((r["budget_steps"] or budget) - budget), -(r["n_seeds"] or 0)))
+                rows.sort(key=lambda r: -(r["n_seeds"] or 0))
                 m = rows[0]
                 row_dict[f"{method}_mean_feasible_best_omega"] = m["mean_feasible_best_omega"]
                 row_dict[f"{method}_ci95"] = m["ci95_feasible_best_omega"]
                 row_dict[f"{method}_n_seeds"] = m["n_seeds"]
             out.append(row_dict)
+    return out
+
+
+def sample_efficiency_table(baseline_rows: List[Dict], target_mus: List[float]) -> List[Dict]:
+    """One row per (method, mu_CO, budget) for baselines at any budget."""
+    out: List[Dict] = []
+    for row in baseline_rows:
+        if not np.isfinite(row.get("mu_co", float("nan"))):
+            continue
+        if not any(abs(row["mu_co"] - mu) < 1e-3 for mu in target_mus):
+            continue
+        out.append(
+            {
+                "method": row["method"],
+                "label": row["label"],
+                "mu_co": row["mu_co"],
+                "budget_steps": int(row["budget_steps"]),
+                "n_seeds": int(row["n_seeds"]),
+                "mean_feasible_best_omega": row["mean_feasible_best_omega"],
+                "ci95": row["ci95_feasible_best_omega"],
+                "mean_constraint_valid_frac": row["mean_constraint_valid_frac"],
+            }
+        )
+    out.sort(key=lambda r: (r["mu_co"], r["budget_steps"], r["method"]))
     return out
 
 
@@ -213,6 +260,7 @@ def write_report(
     baseline_rows: List[Dict],
     headline_rows: List[Dict],
     structure_rows: List[Dict],
+    sample_efficiency_rows: Optional[List[Dict]] = None,
 ) -> None:
     save_root.mkdir(parents=True, exist_ok=True)
     lines: List[str] = []
@@ -278,18 +326,39 @@ def write_report(
         lines.append("## Budget-matched random / SA baselines (Phase 2)")
         lines.append("")
         lines.append(
-            "| method | label | mu_CO | n_seeds | mean(feas Omega) | CI95 | valid_frac |"
+            "| method | label | mu_CO | budget | n_seeds | mean(feas Omega) | CI95 | valid_frac |"
         )
-        lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
+        lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |")
         for row in baseline_rows:
             lines.append(
                 "| "
                 f"{row['method']} | "
                 f"{row['label']} | "
                 f"{row['mu_co']:.2f} | "
+                f"{int(row['budget_steps'])} | "
                 f"{int(row['n_seeds'])} | "
                 f"{row['mean_feasible_best_omega']:.3f} | "
                 f"{row['ci95_feasible_best_omega']:.3f} | "
+                f"{row['mean_constraint_valid_frac']:.3f} |"
+            )
+        lines.append("")
+
+    if sample_efficiency_rows:
+        lines.append("## Sample-efficiency probe: baselines at any budget")
+        lines.append("")
+        lines.append(
+            "| method | mu_CO | budget | n_seeds | mean(feas Omega) | CI95 | valid_frac |"
+        )
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
+        for row in sample_efficiency_rows:
+            lines.append(
+                "| "
+                f"{row['method']} | "
+                f"{row['mu_co']:.2f} | "
+                f"{int(row['budget_steps'])} | "
+                f"{int(row['n_seeds'])} | "
+                f"{row['mean_feasible_best_omega']:.3f} | "
+                f"{row['ci95']:.3f} | "
                 f"{row['mean_constraint_valid_frac']:.3f} |"
             )
         lines.append("")
@@ -378,12 +447,14 @@ def main() -> None:
         baseline_rows.extend(load_baseline_dir(sub, method_label=method_label))
 
     headline_rows = headline_table(envelope_rows, baseline_rows, target_mus, target_budgets)
+    sample_eff_rows = sample_efficiency_table(baseline_rows, target_mus)
     structure_rows = read_csv_rows(Path(args.structure_summary))
 
     write_csv(save_root / "envelope_pareto.csv", envelope_rows)
     write_csv(save_root / "baselines_aggregated.csv", baseline_rows)
     write_csv(save_root / "headline_table.csv", headline_rows)
-    write_report(save_root, envelope_rows, baseline_rows, headline_rows, structure_rows)
+    write_csv(save_root / "sample_efficiency.csv", sample_eff_rows)
+    write_report(save_root, envelope_rows, baseline_rows, headline_rows, structure_rows, sample_eff_rows)
     print(f"[Week7-Pareto] wrote report to {save_root / 'REPORT.md'}")
 
 
