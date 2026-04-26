@@ -11,7 +11,7 @@ function Invoke-PhaseRun([string]$saveRoot, [string]$muCo) {
     $err = Join-Path $saveRoot "run.err.log"
     if (Test-Path $log) { Remove-Item $log -Force }
     if (Test-Path $err) { Remove-Item $err -Force }
-    & $python "ProjectMain\week4_action_reward_ablation.py" `
+    & $python "ProjectMain\week4\week4_action_reward_ablation.py" `
         --profiles "mutation_delta_strict_stop_masked" `
         --seeds "11,22,33" `
         --mu-co $muCo `
@@ -31,4 +31,4 @@ Invoke-PhaseRun "ProjectMain\checkpoints\week7_phase_md4_m08_4k_s3" "-0.8"
 Invoke-PhaseRun "ProjectMain\checkpoints\week7_phase_md4_m10_4k_s3" "-1.0"
 
 # Refresh the envelope report so the new mu rows are available.
-& $python "ProjectMain\week6_envelope_report.py"
+& $python "ProjectMain\week6\week6_envelope_report.py"

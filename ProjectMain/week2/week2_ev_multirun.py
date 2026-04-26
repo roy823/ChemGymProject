@@ -9,6 +9,11 @@ import numpy as np
 import torch
 from tensorboard.backend.event_processing.event_accumulator import EventAccumulator
 
+# Path shim: put ProjectMain/ on sys.path so 'chem_gym' / 'main' resolve regardless of cwd.
+import sys as _sys
+from pathlib import Path as _Path
+_sys.path.insert(0, str(_Path(__file__).resolve().parents[1]))
+
 from chem_gym.agent.trainer import train_agent
 from chem_gym.config import COAdsorptionConfig, EnvConfig, RewardConfig, SurrogateConfig, TrainConfig
 from chem_gym.surrogate.ensemble import SurrogateEnsemble

@@ -40,10 +40,10 @@ foreach ($d in $phaseDirs) {
     if (Test-Path $d) { $inputRuns += $d }
 }
 
-& $python "ProjectMain\week7_structure_audit.py" `
+& $python "ProjectMain\week7\week7_structure_audit.py" `
     --input-runs $inputRuns `
     --save-root $saveRoot `
     --eval-steps 120 `
     --oracle-mode "hybrid" *>> $log 2>> $err
 
-& $python "ProjectMain\week7_pareto_report.py"
+& $python "ProjectMain\week7\week7_pareto_report.py"

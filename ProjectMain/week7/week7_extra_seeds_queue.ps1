@@ -11,7 +11,7 @@ function Invoke-MaskedRun([string]$saveRoot, [string]$muCo, [int]$trainSteps, [i
     $err = Join-Path $saveRoot "run.err.log"
     if (Test-Path $log) { Remove-Item $log -Force }
     if (Test-Path $err) { Remove-Item $err -Force }
-    & $python "ProjectMain\week4_action_reward_ablation.py" `
+    & $python "ProjectMain\week4\week4_action_reward_ablation.py" `
         --profiles "mutation_delta_strict_stop_masked" `
         --seeds $seeds `
         --mu-co $muCo `
@@ -39,4 +39,4 @@ Invoke-MaskedRun "ProjectMain\checkpoints\week7_extra_seeds_m06_md2_4k_extra"   
 Invoke-MaskedRun "ProjectMain\checkpoints\week7_extra_seeds_m06_md6_4k_extra"   "-0.6" 4096 160 100 "44,55" 6
 
 # Refresh the headline envelope report so the new seeds show up.
-& $python "ProjectMain\week6_envelope_report.py"
+& $python "ProjectMain\week6\week6_envelope_report.py"

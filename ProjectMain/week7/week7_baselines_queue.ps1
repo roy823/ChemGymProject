@@ -12,7 +12,7 @@ function Invoke-Baseline([string]$method, [string]$muCo, [int]$totalSteps, [stri
     $err = Join-Path $saveRoot "run.err.log"
     if (Test-Path $log) { Remove-Item $log -Force }
     if (Test-Path $err) { Remove-Item $err -Force }
-    & $python "ProjectMain\week7_baselines_feasible.py" `
+    & $python "ProjectMain\week7\week7_baselines_feasible.py" `
         --method $method `
         --mu-co $muCo `
         --total-steps $totalSteps `
@@ -34,4 +34,4 @@ Invoke-Baseline "sa_mutation"     "-0.2" 4096 "ProjectMain\checkpoints\week7_bas
 Invoke-Baseline "random_mutation" "-0.6" 4096 "ProjectMain\checkpoints\week7_baselines_random_m06_4k_md4" 4
 Invoke-Baseline "sa_mutation"     "-0.6" 4096 "ProjectMain\checkpoints\week7_baselines_sa_m06_4k_md4"     4
 
-& $python "ProjectMain\week7_pareto_report.py"
+& $python "ProjectMain\week7\week7_pareto_report.py"
